@@ -1,0 +1,46 @@
+{
+  "classification": {
+    "dataset": "Deutsche Bahn delays, 2025-06 (huggingface.co/datasets/piebro/deutsche-bahn-data)",
+    "task": "classification: delayed (>=5 min) vs. on time",
+    "cutoff_date": "2025-06-25",
+    "n_rows_total": 1515771,
+    "n_train_tabpfn": 10000,
+    "n_train_xgboost": 1208868,
+    "n_test": 5000,
+    "tabpfn": {
+      "roc_auc": 0.734,
+      "pr_auc": 0.488,
+      "fit_seconds": 4.26,
+      "predict_seconds": 2.63
+    },
+    "xgboost": {
+      "roc_auc": 0.751,
+      "pr_auc": 0.504,
+      "fit_seconds": 5.86,
+      "predict_seconds": 0.01
+    },
+    "data_efficiency": "TabPFN used 10,000/1,208,868 rows (0.8% of XGBoost's training data)"
+  },
+  "regression": {
+    "dataset": "Deutsche Bahn delays, 2025-06 (huggingface.co/datasets/piebro/deutsche-bahn-data)",
+    "task": "regression: delay_in_min (clipped to [-15, 120])",
+    "cutoff_date": "2025-06-25",
+    "n_rows_total": 1513582,
+    "n_train_tabpfn": 10000,
+    "n_train_xgboost": 1207182,
+    "n_test": 5000,
+    "tabpfn": {
+      "mae": 4.64,
+      "rmse": 9.3,
+      "fit_seconds": 4.2,
+      "predict_seconds": 2.69
+    },
+    "xgboost": {
+      "mae": 4.66,
+      "rmse": 9.26,
+      "fit_seconds": 5.7,
+      "predict_seconds": 0.01
+    },
+    "data_efficiency": "TabPFN used 10,000/1,207,182 rows (0.83% of XGBoost's training data)"
+  }
+}

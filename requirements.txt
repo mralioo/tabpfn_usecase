@@ -1,0 +1,34 @@
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+python-dotenv>=1.0
+
+# TabPFN-3.5 hosted inference
+tabpfn-client>=0.2
+
+# Baseline for the benchmark (a real tuned model, not a naive heuristic)
+xgboost>=2.0
+
+# Big-data railway benchmarks (tabpfn_lab/datasets/deutsche_bahn.py, finnish.py)
+huggingface-hub>=0.20
+pyarrow>=14.0
+
+# MCP server + agent harness
+fastmcp>=2.0
+litellm>=1.40
+
+# Dashboard (Streamlit — dataset exploration, live prediction, both benchmarks)
+streamlit>=1.35
+plotly>=5.20
+networkx>=3.0   # Berlin network-topology exploration (articulation points, betweenness)
+
+# Closure Impact Lab (webapp/ — Starlette + uvicorn; already pulled in by fastmcp/streamlit
+# above, pinned explicitly here since webapp/server.py imports them directly)
+starlette>=1.0
+uvicorn>=0.30
+
+# Exploration notebooks (notebooks/ — marimo, reactive Python notebooks, no Jupyter needed)
+marimo>=0.25
+
+# Tests
+pytest>=7.0

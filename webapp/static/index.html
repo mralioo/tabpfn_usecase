@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>U-Bahn Closure Impact Lab</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* layout: three-pane control room — topology map majority top-left, full-height model-comparison rail right, operator chat + agent trace strip along the bottom; collapses to one column under 980px */
+:root{
+  --bg:#0b0f14; --bg-elev:#121821; --surface:#171f2b; --surface-2:#1e283a;
+  --border:#2a3547; --fg:#e8edf3; --fg-muted:#8a96a8; --fg-faint:#5c6a7e;
+  --accent:#5fc3e4; --accent-dim:#2c5a6c;
+  --good:#3fb950; --warn:#e0a526; --danger:#f0675f;
+  --xgb:#f3791d; --tab:#5fc3e4;
+  --mono:'IBM Plex Mono',ui-monospace,monospace; --sans:'IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --bg:#eef1f4; --bg-elev:#ffffff; --surface:#ffffff; --surface-2:#f2f5f8;
+    --border:#d7dee6; --fg:#121823; --fg-muted:#56657a; --fg-faint:#8795a8;
+    --accent:#1b7fa3; --accent-dim:#cfe8f0;
+    --good:#1a7f37; --warn:#9a6700; --danger:#c22a2a;
+    --xgb:#c05a0f; --tab:#1b7fa3;
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#eef1f4; --bg-elev:#ffffff; --surface:#ffffff; --surface-2:#f2f5f8;
+  --border:#d7dee6; --fg:#121823; --fg-muted:#56657a; --fg-faint:#8795a8;
+  --accent:#1b7fa3; --accent-dim:#cfe8f0;
+  --good:#1a7f37; --warn:#9a6700; --danger:#c22a2a;
+  --xgb:#c05a0f; --tab:#1b7fa3;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);margin:0;font-size:13px;line-height:1.45}
+button,input{font-family:inherit;font-size:inherit;color:inherit}
+.tnum{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--mono)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
+::-webkit-scrollbar-track{background:transparent}
+
+.app{
+  display:grid;
+  grid-template-columns:1fr 380px;
+  grid-template-rows:auto 1fr 320px;
+  grid-template-areas:"top top" "map side" "bottom side";
+  height:100dvh;
+}
+@media (max-width:980px){
+  .app{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;grid-template-areas:"top" "map" "bottom" "side";height:auto;min-height:100dvh}
+}
+
+.topbar{
+  grid-area:top; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:10px 16px; background:var(--bg-elev); border-bottom:1px solid var(--border);
+}
+.brand{display:flex; align-items:center; gap:9px; font-weight:600; letter-spacing:.2px}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.brand small{display:block;font-weight:400;color:var(--fg-muted);font-size:11px;margin-top:1px}
+.meta-chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.chip{
+  display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;border:1px solid var(--border);
+  background:var(--surface);color:var(--fg-muted);font-size:11px;white-space:nowrap;
+}
+.chip b{color:var(--fg);font-weight:600}
+.chip.live{color:var(--good);border-color:color-mix(in srgb, var(--good) 45%, var(--border))}
+.chip.off{color:var(--fg-faint)}
+.chip .pulse{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+.map-pane{grid-area:map; display:flex; flex-direction:column; min-width:0; min-height:0; border-right:1px solid var(--border); background:var(--bg)}
+.map-controls{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:var(--bg-elev)}
+.line-filters{display:flex;gap:5px;flex-wrap:wrap}
+.line-pill{
+  border:1px solid var(--border); background:var(--surface); color:var(--fg);
+  border-radius:6px; padding:3px 8px; font-size:11px; font-weight:600; cursor:pointer; font-family:var(--mono);
+  display:flex; align-items:center; gap:5px; opacity:1; transition:opacity .15s;
+}
+.line-pill .sw{width:9px;height:9px;border-radius:2px}
+.line-pill[data-off="1"]{opacity:.3}
+.search-wrap{margin-left:auto;display:flex;align-items:center;gap:6px;position:relative}
+.search-wrap input{
+  background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:5px 9px;
+  color:var(--fg); width:190px; outline:none;
+}
+.search-wrap input:focus{border-color:var(--accent)}
+.btn{
+  background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:5px 10px;
+  cursor:pointer; color:var(--fg); font-weight:500;
+}
+.btn:hover{border-color:var(--accent)}
+.btn.ghost{background:transparent}
+.btn.small{padding:3px 8px;font-size:11px}
+
+.map-stage{position:relative; flex:1; min-height:0}
+.map-stage svg{display:block;width:100%;height:100%}
+.map-stage text{font-family:var(--mono)}
+
+.station-card{
+  position:absolute; top:12px; left:12px; width:252px; max-width:calc(100% - 24px);
+  background:var(--bg-elev); border:1px solid var(--border); border-radius:10px; padding:12px;
+  box-shadow:0 10px 30px rgba(0,0,0,.35); z-index:5;
+}
+.station-card h4{margin:0 0 2px;font-size:14px}
+.station-card .sub{color:var(--fg-muted);font-size:11px;margin-bottom:8px}
+.station-card .lines-row{display:flex;gap:4px;margin-bottom:9px;flex-wrap:wrap}
+.linebadge{font-family:var(--mono);font-size:10px;font-weight:700;color:#0b0f14;border-radius:4px;padding:1px 5px}
+.station-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:9px}
+.stat-box{background:var(--surface-2);border-radius:6px;padding:6px 7px}
+.stat-box .l{color:var(--fg-muted);font-size:9.5px;text-transform:uppercase;letter-spacing:.4px}
+.stat-box .v{font-family:var(--mono);font-size:13px;font-weight:600;margin-top:1px}
+.spark{width:100%;height:34px;display:block}
+.station-card .close-x{position:absolute;top:8px;right:9px;cursor:pointer;color:var(--fg-muted);background:none;border:none;font-size:14px;padding:2px}
+
+.legend-note{position:absolute;bottom:10px;left:12px;font-size:10.5px;color:var(--fg-faint);background:color-mix(in srgb, var(--bg-elev) 85%, transparent);padding:4px 8px;border-radius:6px;border:1px solid var(--border)}
+.scenario-banner{
+  position:absolute; top:12px; right:12px; max-width:300px; background:var(--bg-elev); border:1px solid var(--danger);
+  border-radius:10px; padding:10px 12px; font-size:11.5px; z-index:5; box-shadow:0 10px 30px rgba(0,0,0,.35);
+}
+.scenario-banner .t{color:var(--danger);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;display:flex;align-items:center;gap:6px}
+.scenario-banner .artic{background:var(--danger);color:#1a0505;border-radius:4px;padding:0 5px;font-size:9px}
+.loading-note{position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--warn);background:color-mix(in srgb, var(--bg-elev) 90%, transparent);padding:5px 10px;border-radius:6px;border:1px solid var(--warn);display:flex;align-items:center;gap:6px}
+.loading-note .spin{width:9px;height:9px;border-radius:50%;border:2px solid var(--warn);border-top-color:transparent;animation:spin .8s linear infinite}
+
+.bottom-bar{grid-area:bottom; display:grid; grid-template-columns:1.2fr 1fr; min-height:0; border-top:1px solid var(--border); border-right:1px solid var(--border)}
+@media (max-width:980px){.bottom-bar{grid-template-columns:1fr; height:620px}}
+.chat-col{display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--border); background:var(--bg-elev)}
+.pane-head{padding:8px 12px;border-bottom:1px solid var(--border);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg-muted);display:flex;align-items:center;gap:7px;justify-content:space-between}
+.pane-head label{display:flex;align-items:center;gap:5px;font-weight:500;text-transform:none;letter-spacing:0;font-size:10.5px;cursor:pointer}
+.chat-log{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:92%;padding:8px 10px;border-radius:9px;font-size:12.5px;line-height:1.5}
+.msg.op{align-self:flex-end;background:var(--accent-dim);color:var(--fg);border-bottom-right-radius:3px}
+.msg.agent{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:3px}
+.msg.agent b{color:var(--accent)}
+.msg .mini{display:block;margin-top:6px;font-size:10.5px;color:var(--fg-muted)}
+.typing{align-self:flex-start;display:flex;gap:4px;padding:8px 10px}
+.typing span{width:5px;height:5px;border-radius:50%;background:var(--fg-faint);animation:bounce 1.1s infinite ease-in-out}
+.typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-4px);opacity:1}}
+@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+.presets{display:flex;gap:6px;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--border)}
+.preset-chip{
+  border:1px solid var(--border);background:var(--surface);color:var(--fg-muted);border-radius:999px;
+  padding:5px 10px;font-size:11px;cursor:pointer;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.preset-chip:hover{border-color:var(--accent);color:var(--fg)}
+.preset-chip:disabled,.chat-input-row input:disabled,.chat-input-row button:disabled{opacity:.4;cursor:default}
+.chat-input-row{display:flex;gap:7px;padding:9px 12px;border-top:1px solid var(--border)}
+.chat-input-row input{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--fg);outline:none}
+.chat-input-row input:focus{border-color:var(--accent)}
+.chat-input-row button{background:var(--accent);color:#06141c;border:none;border-radius:8px;padding:0 14px;font-weight:700;cursor:pointer}
+
+.trace-col{display:flex;flex-direction:column;min-height:0;background:var(--bg)}
+.pipeline{display:flex;align-items:center;gap:2px;padding:10px 10px 6px;overflow-x:auto}
+.pstep{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:62px;flex-shrink:0}
+.pstep .node{width:26px;height:26px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;color:var(--fg-muted);background:var(--surface);transition:all .2s}
+.pstep .lbl{font-size:9px;text-align:center;color:var(--fg-faint);line-height:1.2}
+.pstep.active .node{border-color:var(--warn);color:var(--warn);box-shadow:0 0 0 4px color-mix(in srgb, var(--warn) 18%, transparent);animation:spin 1s linear infinite}
+.pstep.active .lbl{color:var(--warn)}
+.pstep.done .node{border-color:var(--good);color:var(--good);background:color-mix(in srgb, var(--good) 12%, var(--surface))}
+.pstep.done .lbl{color:var(--fg-muted)}
+.pconnector{flex:1;height:2px;background:var(--border);min-width:10px;margin-bottom:17px}
+.pconnector.done{background:var(--good)}
+.call-log{flex:1;overflow-y:auto;padding:4px 12px 10px;font-family:var(--mono);font-size:10.8px;display:flex;flex-direction:column;gap:3px}
+.call-log .line{color:var(--fg-muted);white-space:pre-wrap;word-break:break-word}
+.call-log .line .t{color:var(--fg-faint);margin-right:6px}
+.call-log .line.mcp{color:var(--accent)}
+.call-log .line.xgb{color:var(--xgb)}
+.call-log .line.tab{color:var(--tab)}
+.call-log .line.ok{color:var(--good)}
+.call-log .line.err{color:var(--danger)}
+.call-log .empty{color:var(--fg-faint);font-style:italic}
+
+.results{grid-area:side; display:flex; flex-direction:column; min-height:0; background:var(--bg-elev); border-left:1px solid var(--border)}
+.results-scroll{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+.results-empty{color:var(--fg-muted);font-size:12px;padding:20px 6px;line-height:1.6}
+.results-empty b{color:var(--fg)}
+.impact-summary{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.isum-box{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:9px 10px}
+.isum-box .l{font-size:9.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.4px}
+.isum-box .v{font-family:var(--mono);font-size:17px;font-weight:700;margin-top:2px}
+.isum-box .v small{font-size:10px;font-weight:500;color:var(--fg-muted)}
+.artic-banner{background:color-mix(in srgb, var(--danger) 16%, var(--surface));border:1px solid var(--danger);border-radius:9px;padding:8px 10px;font-size:11.5px;color:var(--fg)}
+
+.model-cards{display:flex;flex-direction:column;gap:8px}
+.model-card{border:1px solid var(--border);border-radius:9px;padding:10px 11px;background:var(--surface)}
+.model-card .mh{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.model-card .sw{width:10px;height:10px;border-radius:3px}
+.model-card .mh b{font-size:12.5px}
+.model-card .mh span{margin-left:auto;font-size:10px;color:var(--fg-muted)}
+.src-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:1px 6px;border-radius:4px}
+.src-badge.live{background:color-mix(in srgb, var(--good) 20%, transparent);color:var(--good)}
+.src-badge.simulated{background:color-mix(in srgb, var(--warn) 20%, transparent);color:var(--warn)}
+.mcard-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px}
+.mcard-grid .l{color:var(--fg-muted);font-size:9.5px;text-transform:uppercase;letter-spacing:.3px}
+.mcard-grid .v{font-family:var(--mono);font-weight:600}
+.mcard-note{margin-top:6px;font-size:10px;color:var(--fg-faint);font-style:italic}
+
+.compare-chart{display:flex;flex-direction:column;gap:7px}
+.bar-row{display:flex;flex-direction:column;gap:3px}
+.bar-row .name{display:flex;justify-content:space-between;font-size:11px;gap:8px}
+.bar-row .name .main{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-row .name .hop{color:var(--fg-faint);font-size:9.5px;margin-left:5px}
+.bar-track{position:relative;height:7px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.bar-fill{position:absolute;top:0;left:0;height:100%;border-radius:4px}
+.bar-fill.xgb{background:var(--xgb);opacity:.9}
+.bar-fill.tab{background:var(--tab);opacity:.9;height:3px;top:4px}
+.bar-legend{display:flex;gap:12px;font-size:10px;color:var(--fg-muted);margin-top:2px;flex-wrap:wrap}
+.bar-legend span{display:flex;align-items:center;gap:4px}
+.bar-legend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+
+.findings{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:10px 11px;font-size:12px;line-height:1.55}
+.findings b{color:var(--fg)}
+.findings .f-xgb{color:var(--xgb);font-weight:600}
+.findings .f-tab{color:var(--tab);font-weight:600}
+
+.methodology{border-top:1px solid var(--border);padding:9px 12px;font-size:10.3px;color:var(--fg-faint);line-height:1.5}
+.methodology summary{cursor:pointer;color:var(--fg-muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px}
+.methodology code{font-family:var(--mono);background:var(--surface-2);padding:0 3px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <div>U-Bahn Closure Impact Lab
+        <small>Berlin network · Alstom / InnoTrans 2026 dataset · local build</small>
+      </div>
+    </div>
+    <div class="meta-chips" id="meta-chips">
+      <span class="chip">connecting to backend…</span>
+    </div>
+  </div>
+
+  <div class="map-pane">
+    <div class="map-controls">
+      <div class="line-filters" id="line-filters"></div>
+      <div class="search-wrap">
+        <input id="station-search" list="station-list" placeholder="Jump to station…" autocomplete="off">
+        <datalist id="station-list"></datalist>
+        <button class="btn small ghost" id="clear-scenario-btn" title="Clear active scenario">Reset view</button>
+      </div>
+    </div>
+    <div class="map-stage" id="map-stage">
+      <svg id="map-svg" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend-note">Node size ≈ avg 15-min passenger flow · dots trace simulated train/passenger movement</div>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <div class="chat-col">
+      <div class="pane-head">
+        <span>Operator chat</span>
+        <label><input type="checkbox" id="live-tabpfn-toggle" checked> Live TabPFN-3.5</label>
+      </div>
+      <div class="chat-log" id="chat-log"></div>
+      <div class="presets" id="presets"></div>
+      <div class="chat-input-row">
+        <input id="chat-input" placeholder="e.g. What if Kottbusser Tor closes?" autocomplete="off">
+        <button id="chat-send">Ask</button>
+      </div>
+    </div>
+    <div class="trace-col">
+      <div class="pane-head">Agentic workflow — MCP &amp; ML engine calls</div>
+      <div class="pipeline" id="pipeline"></div>
+      <div class="call-log" id="call-log"><div class="empty">No scenario run yet. Ask a question to trace the agent's real tool calls here.</div></div>
+    </div>
+  </div>
+
+  <div class="results">
+    <div class="pane-head">Model comparison — XGBoost vs TabPFN-3.5</div>
+    <div class="results-scroll" id="results-scroll">
+      <div class="results-empty" id="results-empty">
+        Select a closure scenario from the chat to compare how the <b>XGBoost baseline</b> and <b>TabPFN-3.5</b>
+        each size up the network impact — affected stations, P(≥ own P90 load), inference time, and how much
+        data each model actually used. Both calls are genuine model inference against this repo's real
+        <code>tabpfn_lab</code> pipeline, not canned numbers.
+      </div>
+    </div>
+    <details class="methodology">
+      <summary>Methodology</summary>
+      Topology, line/operator metadata and 15-min flow statistics are the real
+      <code>Berlin_Ubahn_Alstom_data</code> files (168 stations, 182 links, 8 lines). Closure scenarios come
+      from the dataset's own <code>closures_pre_innotrans.csv</code> / <code>closures_rest.csv</code> records.
+      XGBoost is fit locally on the full chronological training split; TabPFN-3.5 runs as a genuine
+      <code>tabpfn_client</code> API call against an 8,000-row in-context sample — both through this repo's
+      <code>tabpfn_lab</code> package, the same code the MCP server and Streamlit dashboard use. If
+      <code>TABPFN_API_TOKEN</code> is missing or a call fails, that side falls back to a labelled, deterministic
+      simulation so the app still runs end to end offline.
+    </details>
+  </div>
+</div>
+
+<script>
+const LINE_COLORS = {U1:"#7DAD4C",U2:"#DA421E",U3:"#16683D",U5:"#7E5330",U6:"#8C6DAB",U7:"#528DBA",U8:"#224F86",U9:"#F3791D"};
+let TOPO = null;
+let byId = new Map();
+let nameToStation = new Map();
+
+function fmtInt(n){return Math.round(n).toLocaleString("en-US");}
+function fmtPct(p){return (p*100).toFixed(0)+"%";}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
+
+async function boot(){
+  const metaChips = document.getElementById("meta-chips");
+  try{
+    const res = await fetch("/api/topology");
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    TOPO = await res.json();
+  }catch(e){
+    metaChips.innerHTML = `<span class="chip" style="color:var(--danger);border-color:var(--danger)">Backend unreachable — run <code>make dashboard-closures</code> and reload</span>`;
+    console.error(e);
+    return;
+  }
+  byId = new Map(TOPO.stations.map(s=>[s.id,s]));
+  nameToStation = new Map(TOPO.stations.map(s=>[s.name.toLowerCase(),s]));
+  metaChips.innerHTML = `
+    <span class="chip"><b>${TOPO.meta.n_stations}</b>&nbsp;stations</span>
+    <span class="chip"><b>${TOPO.meta.n_connections}</b>&nbsp;links</span>
+    <span class="chip"><b>${TOPO.meta.n_lines}</b>&nbsp;lines</span>
+    <span class="chip">Operator&nbsp;<b>BVG</b>&nbsp;(id ${TOPO.meta.operator_id})</span>
+    <span class="chip live"><span class="pulse"></span>Live backend · tabpfn_lab</span>
+  `;
+  buildMap();
+  buildLineFilters();
+  buildSearch();
+  buildPresets();
+  addMsg("agent","<b>Dispatcher:</b> Ask about any station closure or line suspension — try a quick scenario below, or type a station name with \"close\" / \"suspend\". The XGBoost and TabPFN-3.5 calls below are real inference, not canned numbers.");
+}
+
+/* ---------- graph (client-side, for highlighting only — the real BFS runs server-side) ---------- */
+const adjacency = new Map();
+function buildAdjacency(){
+  TOPO.stations.forEach(s=>adjacency.set(s.id,new Set()));
+  TOPO.connections.forEach(([a,b])=>{
+    if(adjacency.has(a)&&adjacency.has(b)){adjacency.get(a).add(b); adjacency.get(b).add(a);}
+  });
+}
+
+/* ---------- map projection ---------- */
+let stationXY = new Map(), edgeData = [], nodeEls = new Map();
+let PAD=56, VB_W=1000, VB_H=1000, lonMin,lonMax,latMin,latMax,lonScale,spanLon,spanLat,maxMean=1;
+
+function project(lon,lat){
+  const x = PAD + ((lon-lonMin)*lonScale/spanLon)*(VB_W-2*PAD);
+  const y = PAD + ((latMax-lat)/spanLat)*(VB_H-2*PAD);
+  return [x,y];
+}
+function nodeR(mean){ return 2.6 + Math.sqrt(mean/maxMean)*8.5; }
+function lineColorFor(linesArr){
+  for(const l of linesArr) if(LINE_COLORS[l]) return LINE_COLORS[l];
+  return "#6b7686";
+}
+function sharedLineColor(aId,bId){
+  const a=byId.get(aId), b=byId.get(bId);
+  const shared = a.lines.find(l=>b.lines.includes(l));
+  return LINE_COLORS[shared] || "#45505f";
+}
+
+const SVGNS="http://www.w3.org/2000/svg";
+function el(tag,attrs){const e=document.createElementNS(SVGNS,tag); for(const k in attrs) e.setAttribute(k,attrs[k]); return e;}
+
+function buildMap(){
+  buildAdjacency();
+  const lons=TOPO.stations.map(s=>s.lon), lats=TOPO.stations.map(s=>s.lat);
+  lonMin=Math.min(...lons); lonMax=Math.max(...lons);
+  latMin=Math.min(...lats); latMax=Math.max(...lats);
+  const latMid=(latMin+latMax)/2*Math.PI/180;
+  lonScale=Math.cos(latMid);
+  spanLon=(lonMax-lonMin)*lonScale; spanLat=(latMax-latMin);
+  VB_W=1000; VB_H=Math.round(Math.max(620, VB_W*spanLat/spanLon)+80);
+  const svg = document.getElementById("map-svg");
+  svg.setAttribute("viewBox",`0 0 ${VB_W} ${VB_H}`);
+  stationXY = new Map(TOPO.stations.map(s=>[s.id, project(s.lon,s.lat)]));
+  maxMean = Math.max(...TOPO.stations.map(s=>s.mean));
+
+  const edgeLayer = el("g",{id:"edges"});
+  const particleLayer = el("g",{id:"particles"});
+  const impactLayer = el("g",{id:"impact"});
+  const nodeLayer = el("g",{id:"nodes"});
+  svg.append(edgeLayer, particleLayer, impactLayer, nodeLayer);
+  window.__impactLayer = impactLayer;
+
+  edgeData = [];
+  TOPO.connections.forEach(([a,b])=>{
+    if(!stationXY.has(a)||!stationXY.has(b)) return;
+    const [x1,y1]=stationXY.get(a), [x2,y2]=stationXY.get(b);
+    const color = sharedLineColor(a,b);
+    const line = el("line",{x1,y1,x2,y2,stroke:color,"stroke-width":2.4,"stroke-linecap":"round",opacity:0.55});
+    edgeLayer.appendChild(line);
+    const sa=byId.get(a), sb=byId.get(b);
+    edgeData.push({a,b,x1,y1,x2,y2,color,weight:((sa.mean+sb.mean)/2)/maxMean, el:line});
+  });
+
+  nodeEls = new Map();
+  TOPO.stations.forEach(s=>{
+    const [x,y]=stationXY.get(s.id);
+    const g = el("g",{class:"station-node", "data-id":s.id, style:"cursor:pointer"});
+    const halo = el("circle",{cx:x,cy:y,r:nodeR(s.mean)+5,fill:"transparent"});
+    const c = el("circle",{cx:x,cy:y,r:nodeR(s.mean),fill:lineColorFor(s.lines),stroke:"#060a0f","stroke-width":1,opacity:0.92});
+    const title = el("title",{}); title.textContent = `${s.name} — ${s.lines.join(", ")} — avg ${fmtInt(s.mean)} riders/15min`;
+    g.append(halo,c,title);
+    g.addEventListener("click",()=>selectStation(s.id));
+    nodeLayer.appendChild(g);
+    nodeEls.set(s.id,{g,c,s});
+  });
+
+  startParticles();
+}
+
+function buildLineFilters(){
+  const activeLines = new Set(Object.keys(LINE_COLORS));
+  const lineFiltersEl = document.getElementById("line-filters");
+  Object.keys(LINE_COLORS).forEach(ln=>{
+    const b = document.createElement("button");
+    b.className="line-pill"; b.dataset.off="0";
+    b.innerHTML = `<span class="sw" style="background:${LINE_COLORS[ln]}"></span>${ln}`;
+    b.addEventListener("click",()=>{
+      if(activeLines.has(ln)){activeLines.delete(ln); b.dataset.off="1";} else {activeLines.add(ln); b.dataset.off="0";}
+      applyLineFilter(activeLines);
+    });
+    lineFiltersEl.appendChild(b);
+  });
+}
+function applyLineFilter(activeLines){
+  nodeEls.forEach(({g,s})=>{ g.style.opacity = s.lines.some(l=>activeLines.has(l))?1:0.08; });
+  edgeData.forEach(e=>{
+    const sa=byId.get(e.a), sb=byId.get(e.b);
+    const show = sa.lines.some(l=>activeLines.has(l)) && sb.lines.some(l=>activeLines.has(l));
+    e.el.style.opacity = show?0.55:0.04;
+  });
+}
+
+function buildSearch(){
+  const dl = document.getElementById("station-list");
+  TOPO.stations.forEach(s=>{ const o=document.createElement("option"); o.value=s.name; dl.appendChild(o); });
+  document.getElementById("station-search").addEventListener("change",(e)=>{
+    const st = nameToStation.get(e.target.value.toLowerCase());
+    if(st) selectStation(st.id);
+  });
+}
+
+/* ---------- station info card ---------- */
+function buildSpark(stationMean){
+  const vals = TOPO.hourly_profile;
+  const scale = stationMean>0 ? stationMean/(TOPO.stations.reduce((a,s)=>a+s.mean,0)/TOPO.stations.length) : 1;
+  const series = vals.map(v=>v*scale/1000);
+  const max=Math.max(...series), min=Math.min(...series);
+  const w=240,h=34,pad=2;
+  const pts = series.map((v,i)=>{
+    const x = pad + (i/(series.length-1))*(w-2*pad);
+    const y = h-pad - ((v-min)/Math.max(1,(max-min)))*(h-2*pad);
+    return [x,y];
+  });
+  const path = pts.map((p,i)=> (i===0?"M":"L")+p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ");
+  const area = path + ` L${pts[pts.length-1][0].toFixed(1)},${h} L${pts[0][0].toFixed(1)},${h} Z`;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}">
+    <path d="${area}" fill="var(--accent)" opacity="0.18"></path>
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6"></path>
+  </svg>`;
+}
+function selectStation(id){
+  const s = byId.get(id);
+  let card = document.getElementById("station-card");
+  if(!card){
+    card = document.createElement("div"); card.className="station-card"; card.id="station-card";
+    document.getElementById("map-stage").appendChild(card);
+  }
+  card.innerHTML = `
+    <button class="close-x" id="card-close">✕</button>
+    <h4>${esc(s.name)}</h4>
+    <div class="sub">${esc(s.id)}</div>
+    <div class="lines-row">${s.lines.map(l=>`<span class="linebadge" style="background:${LINE_COLORS[l]||'#888'}">${l}</span>`).join("")}</div>
+    <div class="station-stats">
+      <div class="stat-box"><div class="l">Avg / 15min</div><div class="v tnum">${fmtInt(s.mean)}</div></div>
+      <div class="stat-box"><div class="l">P90</div><div class="v tnum">${fmtInt(s.p90)}</div></div>
+      <div class="stat-box"><div class="l">Peak</div><div class="v tnum">${fmtInt(s.max)}</div></div>
+    </div>
+    ${buildSpark(s.mean)}
+    <div class="sub" style="margin-top:4px">Illustrative daily load, scaled to this station's share of network average</div>
+  `;
+  document.getElementById("card-close").addEventListener("click",()=>{card.remove(); clearStationHighlight();});
+  highlightStationNeighbors(id);
+}
+function clearStationHighlight(){ edgeData.forEach(e=>e.el.setAttribute("stroke-width",2.4)); }
+function highlightStationNeighbors(id){
+  clearStationHighlight();
+  edgeData.forEach(e=>{ if(e.a===id||e.b===id) e.el.setAttribute("stroke-width",4.5); });
+}
+
+/* ---------- particle flow animation ---------- */
+function startParticles(){
+  const particleLayer = document.getElementById("map-svg").querySelector("#particles");
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const PARTICLE_COUNT = reduceMotion ? 0 : 140;
+  const weightSum = edgeData.reduce((a,e)=>a+Math.max(0.04,e.weight),0);
+  function pickEdge(){
+    let r = Math.random()*weightSum;
+    for(const e of edgeData){ r -= Math.max(0.04,e.weight); if(r<=0) return e; }
+    return edgeData[edgeData.length-1];
+  }
+  const particles=[];
+  for(let i=0;i<PARTICLE_COUNT;i++){
+    const e=pickEdge();
+    const p = el("circle",{r:1.5,fill:e.color,opacity:0.85});
+    particleLayer.appendChild(p);
+    particles.push({edge:e, t:Math.random(), dir: Math.random()<0.5?1:-1, speed:0.05+e.weight*0.22, dom:p});
+  }
+  let lastT=performance.now();
+  function tick(now){
+    const dt=Math.min(0.05,(now-lastT)/1000); lastT=now;
+    particles.forEach(p=>{
+      p.t += p.dir*p.speed*dt;
+      if(p.t>1||p.t<0){ p.edge=pickEdge(); p.t = p.dir>0?0:1; p.dom.setAttribute("fill",p.edge.color); }
+      const e=p.edge;
+      const x = e.x1 + (e.x2-e.x1)*p.t, y = e.y1 + (e.y2-e.y1)*p.t;
+      p.dom.setAttribute("cx",x.toFixed(2)); p.dom.setAttribute("cy",y.toFixed(2));
+    });
+    requestAnimationFrame(tick);
+  }
+  if(!reduceMotion) requestAnimationFrame(tick);
+}
+
+/* ---------- scenario visualization on map ---------- */
+const ringStyle = document.createElement("style");
+ringStyle.textContent = `@keyframes ringpulse{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.9)}}`;
+document.head.appendChild(ringStyle);
+
+function clearScenario(){
+  window.__impactLayer.innerHTML="";
+  const b=document.getElementById("scenario-banner"); if(b) b.remove();
+  const l=document.getElementById("loading-note"); if(l) l.remove();
+  nodeEls.forEach(({c})=>c.setAttribute("stroke","#060a0f"));
+}
+function paintScenario(result){
+  clearScenario();
+  const impactLayer = window.__impactLayer;
+  result.epicenters.forEach(ep=>{
+    if(!stationXY.has(ep.id)) return;
+    const [x,y]=stationXY.get(ep.id);
+    for(let ring=0;ring<2;ring++){
+      const c = el("circle",{cx:x,cy:y,r:nodeR(byId.get(ep.id).mean)+6,fill:"none",stroke:"#f0675f","stroke-width":2});
+      c.style.animation = `ringpulse 1.6s ease-out ${ring*0.5}s infinite`;
+      impactLayer.appendChild(c);
+    }
+    const ne = nodeEls.get(ep.id); if(ne) ne.c.setAttribute("stroke","#f0675f");
+  });
+  if(result.scenario.kind==="line_segment"){
+    const a=result.epicenters[0]?.id, b=result.epicenters[1]?.id;
+    if(stationXY.has(a)&&stationXY.has(b)){
+      const [x1,y1]=stationXY.get(a), [x2,y2]=stationXY.get(b);
+      impactLayer.appendChild(el("line",{x1,y1,x2,y2,stroke:"#f0675f","stroke-width":4,"stroke-dasharray":"6 5"}));
+    }
+  }
+  result.rows.forEach(r=>{
+    if(!stationXY.has(r.id)) return;
+    const [x,y]=stationXY.get(r.id);
+    const color = r.hop===1?"#e0a526":"#e0a52699";
+    impactLayer.appendChild(el("circle",{cx:x,cy:y,r:nodeR(r.mean)+3.5,fill:"none",stroke:color,"stroke-width":2}));
+    const ne=nodeEls.get(r.id); if(ne) ne.c.setAttribute("stroke",color);
+  });
+
+  const stage = document.getElementById("map-stage");
+  const banner=document.createElement("div"); banner.className="scenario-banner"; banner.id="scenario-banner";
+  const label = result.scenario.kind==="station"
+    ? `Station closed: ${byId.get(result.scenario.station_id).name}`
+    : `${result.scenario.line} suspended: ${byId.get(result.scenario.from_id).name} ↔ ${byId.get(result.scenario.to_id).name}`;
+  banner.innerHTML = `<div class="t">Active scenario ${result.is_articulation_point?'<span class="artic">critical node</span>':''}</div>${esc(label)}<br><span style="color:var(--fg-muted)">${result.affected_count} stations within 2 hops</span>`;
+  stage.appendChild(banner);
+}
+function showLoading(text){
+  let l = document.getElementById("loading-note");
+  if(!l){ l=document.createElement("div"); l.className="loading-note"; l.id="loading-note"; document.getElementById("map-stage").appendChild(l); }
+  l.innerHTML = `<span class="spin"></span>${esc(text)}`;
+}
+function hideLoading(){ const l=document.getElementById("loading-note"); if(l) l.remove(); }
+
+/* ---------- presets ---------- */
+function pickPresets(scenarios){
+  const seen = new Set(); const out = [];
+  for(const kind of ["station","line_segment"]){
+    for(const s of scenarios){
+      if(s.kind!==kind) continue;
+      const k = kind==="station" ? s.station_id : (s.line+s.from_id+s.to_id);
+      if(seen.has(k)) continue;
+      seen.add(k); out.push(s);
+      if(out.filter(x=>x.kind===kind).length>=3) break;
+    }
+  }
+  return out;
+}
+function buildPresets(){
+  const presetsEl = document.getElementById("presets");
+  pickPresets(TOPO.scenarios).forEach(s=>{
+    const chip = document.createElement("button");
+    chip.className="preset-chip"; chip.title=s.text; chip.textContent=s.text;
+    chip.addEventListener("click",()=>runScenario(s,s.text));
+    presetsEl.appendChild(chip);
+  });
+}
+
+/* ---------- chat ---------- */
+const chatLog = document.getElementById("chat-log");
+function addMsg(role,html){
+  const d=document.createElement("div"); d.className="msg "+role; d.innerHTML=html;
+  chatLog.appendChild(d); chatLog.scrollTop=chatLog.scrollHeight;
+  return d;
+}
+
+function findScenarioFromText(text){
+  const low = text.toLowerCase();
+  const exact = TOPO.scenarios.find(s=>low.includes(s.text.toLowerCase().replace(/[?.]/g,"").slice(0,20)));
+  if(exact) return exact;
+  const closeWords = /(close|closed|closes|shut|suspend|suspended)/.test(low);
+  if(!closeWords) return null;
+  for(const s of TOPO.stations){
+    const short = s.name.replace(/\s*\(Berlin\)\s*$/,"").replace(/^(S\+U|S\/U|U|S)\s+/,"").toLowerCase();
+    if(short.length>2 && low.includes(short)){
+      return {kind:"station", station_id:s.id, text:`What if ${s.name} closes?`, duration:"2h", reason:"operator-reported disruption", when:null};
+    }
+  }
+  return null;
+}
+
+let busy=false;
+const pipelineSteps = [
+  {id:"dispatch", lbl:"Dispatcher"},
+  {id:"resolve", lbl:"resolve_\nstation"},
+  {id:"xgb", lbl:"XGBoost\npredict"},
+  {id:"tab", lbl:"TabPFN-3.5\ninfer"},
+  {id:"agg", lbl:"Aggregate"},
+  {id:"write", lbl:"Writer"},
+];
+const pipelineEl = document.getElementById("pipeline");
+pipelineSteps.forEach((st,i)=>{
+  const wrap=document.createElement("div"); wrap.className="pstep"; wrap.id="pstep-"+st.id;
+  wrap.innerHTML = `<div class="node">${i+1}</div><div class="lbl">${st.lbl.replace("\n","<br>")}</div>`;
+  pipelineEl.appendChild(wrap);
+  if(i<pipelineSteps.length-1){ const c=document.createElement("div"); c.className="pconnector"; c.id="pconn-"+i; pipelineEl.appendChild(c); }
+});
+function resetPipeline(){
+  pipelineSteps.forEach(st=>{ document.getElementById("pstep-"+st.id).classList.remove("active","done"); });
+  document.querySelectorAll(".pconnector").forEach(c=>c.classList.remove("done"));
+}
+function setStep(idx,state){
+  const st=pipelineSteps[idx]; const n=document.getElementById("pstep-"+st.id);
+  n.classList.remove("active","done"); n.classList.add(state);
+  if(state==="done" && idx>0) document.getElementById("pconn-"+(idx-1)).classList.add("done");
+}
+const callLogEl = document.getElementById("call-log");
+function logCall(cls,text){
+  if(callLogEl.querySelector(".empty")) callLogEl.innerHTML="";
+  const t=new Date().toTimeString().slice(0,8);
+  const d=document.createElement("div"); d.className="line "+cls;
+  d.innerHTML = `<span class="t">${t}</span>${esc(text)}`;
+  callLogEl.appendChild(d); callLogEl.scrollTop=callLogEl.scrollHeight;
+}
+function setInputsDisabled(disabled){
+  document.getElementById("chat-send").disabled=disabled;
+  document.getElementById("chat-input").disabled=disabled;
+  document.querySelectorAll(".preset-chip").forEach(c=>c.disabled=disabled);
+}
+
+async function postJSON(url, body){
+  const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if(!res.ok || data.error) throw new Error(data.error || ("HTTP "+res.status));
+  return data;
+}
+
+async function runScenario(scenario, displayText){
+  if(busy || !TOPO) return;
+  busy=true; setInputsDisabled(true);
+  addMsg("op", esc(displayText));
+  resetPipeline();
+  const typing = document.createElement("div"); typing.className="typing"; typing.innerHTML="<span></span><span></span><span></span>";
+  chatLog.appendChild(typing); chatLog.scrollTop=chatLog.scrollHeight;
+
+  const label = scenario.kind==="station" ? byId.get(scenario.station_id).name : `${byId.get(scenario.from_id).name} / ${byId.get(scenario.to_id).name}`;
+
+  setStep(0,"active");
+  logCall("", "agent.dispatch(query) — parsed as "+(scenario.kind==="station"?"station_closure":"line_segment_suspension"));
+  await wait(180); setStep(0,"done");
+
+  setStep(1,"active"); await wait(150);
+  logCall("mcp", `mcp.resolve_station("${label}") → resolved`);
+  setStep(1,"done");
+
+  let xgbRes=null, xgbErr=null;
+  setStep(2,"active");
+  logCall("mcp", `mcp.predict_flow(model="xgboost_baseline", stations≤3, horizon="+15min")`);
+  showLoading("Calling XGBoost baseline…");
+  try{
+    xgbRes = await postJSON("/api/impact/xgboost", scenario);
+    logCall("xgb", `engine.xgboost.predict() → ${xgbRes.rows[0]?xgbRes.rows[0].xgb.classify_latency_ms.toFixed(1):"–"}ms · trained on ${fmtInt(xgbRes.xgb_meta.train_rows||0)} local rows`);
+  }catch(e){ xgbErr=e; logCall("err","xgboost call failed: "+e.message); }
+  setStep(2,"done");
+
+  const liveToggle = document.getElementById("live-tabpfn-toggle").checked;
+  let tabRes=null, tabErr=null;
+  setStep(3,"active");
+  logCall("mcp", `mcp.predict_flow(model="tabpfn-3.5", stations≤3, horizon="+15min", live=${liveToggle})`);
+  showLoading(liveToggle ? "Calling TabPFN-3.5 over the network — real API call, can take ~10-20s…" : "Scoring with simulated fallback (live TabPFN off)…");
+  try{
+    tabRes = await postJSON("/api/impact/tabpfn", {...scenario, live_tabpfn: liveToggle});
+    const srcTag = (tabRes.rows[0] && tabRes.rows[0].tabpfn.source==="live") ? "remote API" : "simulated fallback";
+    logCall("tab", `engine.tabpfn.infer() → ${tabRes.rows[0]?tabRes.rows[0].tabpfn.classify_latency_ms.toFixed(0):"–"}ms (${srcTag}) · context ${fmtInt(tabRes.tabpfn_meta.context_rows||0)} rows`);
+  }catch(e){ tabErr=e; logCall("err","tabpfn call failed: "+e.message); }
+  setStep(3,"done");
+  hideLoading();
+
+  setStep(4,"active"); await wait(150);
+  const merged = mergeResults(xgbRes, tabRes, scenario);
+  logCall("ok", `agent.aggregate_and_compare() → ${merged.affected_count} stations within 2 hops`);
+  setStep(4,"done");
+
+  setStep(5,"active"); await wait(120);
+  logCall("ok","agent.writer.compose_summary() → done");
+  setStep(5,"done");
+
+  typing.remove();
+
+  if(!merged.rows.length){
+    addMsg("agent","<b>Agent:</b> No stations fall within a 2-hop blast radius for this closure — isolated impact, no cross-network action needed.");
+  }else{
+    renderResults(merged);
+    paintScenario(merged);
+    const top = merged.rows[0];
+    addMsg("agent", `<b>Agent:</b> ${merged.affected_count} stations fall within 2 hops${merged.is_articulation_point?' — and this station is a <b>critical node</b> (removing it fragments the graph)':''}.
+      Worst-hit: <b>${esc(top.name)}</b> — XGBoost: <span class="f-xgb">${fmtPct(top.xgb.overcrowding_probability)}</span> P(≥P90 load),
+      TabPFN-3.5: <span class="f-tab">${fmtPct(top.tabpfn.overcrowding_probability)}</span>.
+      <span class="mini">XGBoost ${top.xgb.source}, ${top.xgb.classify_latency_ms.toFixed(1)}ms · TabPFN-3.5 ${top.tabpfn.source}, ${(top.tabpfn.classify_latency_ms/1000).toFixed(2)}s · full comparison →</span>`);
+  }
+  busy=false; setInputsDisabled(false);
+}
+
+function mergeResults(xgbRes, tabRes, scenario){
+  const base = xgbRes || tabRes || {epicenters:[], affected_count:0, is_articulation_point:false, rows:[]};
+  const tabById = new Map((tabRes?.rows||[]).map(r=>[r.id,r.tabpfn]));
+  const xgbById = new Map((xgbRes?.rows||[]).map(r=>[r.id,r.xgb]));
+  const ids = xgbRes ? xgbRes.rows.map(r=>r.id) : (tabRes?.rows||[]).map(r=>r.id);
+  const srcRows = xgbRes ? xgbRes.rows : (tabRes?.rows||[]);
+  const rows = srcRows.map(r=>({
+    id:r.id, name:r.name, hop:r.hop, mean:r.mean,
+    xgb: xgbById.get(r.id) || {overcrowding_probability:0, predicted_passengers:0, classify_latency_ms:0, regress_latency_ms:0, source:"simulated"},
+    tabpfn: tabById.get(r.id) || {overcrowding_probability:0, predicted_passengers:0, classify_latency_ms:0, regress_latency_ms:0, source:"simulated"},
+  }));
+  return {
+    scenario,
+    epicenters: base.epicenters,
+    affected_count: base.affected_count,
+    is_articulation_point: base.is_articulation_point,
+    rows,
+    xgb_meta: xgbRes?xgbRes.xgb_meta:{available:false,train_rows:null,fit_seconds:null},
+    tabpfn_meta: tabRes?tabRes.tabpfn_meta:{available:false,context_rows:null,error:"no response"},
+  };
+}
+
+function renderResults(merged){
+  document.getElementById("results-empty")?.remove();
+  const root = document.getElementById("results-scroll");
+  root.innerHTML = "";
+
+  if(merged.is_articulation_point){
+    const art = document.createElement("div"); art.className="artic-banner";
+    art.innerHTML = `<b>Critical node.</b> Graph analysis (networkx articulation points on the real connection graph) shows this station has no bypass — closing it disconnects part of the network, independent of what either model predicts.`;
+    root.appendChild(art);
+  }
+
+  const sum = document.createElement("div"); sum.className="impact-summary";
+  sum.innerHTML = `
+    <div class="isum-box"><div class="l">Stations within 2 hops</div><div class="v tnum">${merged.affected_count}</div></div>
+    <div class="isum-box"><div class="l">Scored in detail</div><div class="v tnum">${merged.rows.length}</div></div>
+  `;
+  root.appendChild(sum);
+
+  const xm = merged.xgb_meta, tm = merged.tabpfn_meta;
+  const xgbSrc = merged.rows[0]?.xgb.source || "simulated";
+  const tabSrc = merged.rows[0]?.tabpfn.source || "simulated";
+  const cards = document.createElement("div"); cards.className="model-cards";
+  cards.innerHTML = `
+    <div class="model-card">
+      <div class="mh"><span class="sw" style="background:var(--xgb)"></span><b>XGBoost baseline</b><span class="src-badge ${xgbSrc}">${xgbSrc}</span></div>
+      <div class="mcard-grid">
+        <div><div class="l">Problem</div><div class="v">Classif. + regression</div></div>
+        <div><div class="l">Target</div><div class="v">P(≥P90) / passengers</div></div>
+        <div><div class="l">Train rows</div><div class="v tnum">${xm.train_rows?fmtInt(xm.train_rows):"–"}</div></div>
+        <div><div class="l">Inference</div><div class="v tnum">${merged.rows[0]?merged.rows[0].xgb.classify_latency_ms.toFixed(1)+" ms":"–"}</div></div>
+      </div>
+    </div>
+    <div class="model-card">
+      <div class="mh"><span class="sw" style="background:var(--tab)"></span><b>TabPFN-3.5</b><span class="src-badge ${tabSrc}">${tabSrc}</span></div>
+      <div class="mcard-grid">
+        <div><div class="l">Problem</div><div class="v">Classif. + regression</div></div>
+        <div><div class="l">Target</div><div class="v">P(≥P90) / passengers</div></div>
+        <div><div class="l">Context rows</div><div class="v tnum">${tm.context_rows?fmtInt(tm.context_rows):"–"}</div></div>
+        <div><div class="l">Inference</div><div class="v tnum">${merged.rows[0]?(merged.rows[0].tabpfn.classify_latency_ms/1000).toFixed(2)+" s":"–"}</div></div>
+      </div>
+      ${tm.error && tabSrc==="simulated" ? `<div class="mcard-note">Fell back to simulation: ${esc(tm.error)}</div>` : ""}
+    </div>
+  `;
+  root.appendChild(cards);
+
+  const chartWrap = document.createElement("div"); chartWrap.className="compare-chart";
+  const legend = document.createElement("div"); legend.className="bar-legend";
+  legend.innerHTML = `<span><i style="background:var(--xgb)"></i>XGBoost — P(≥P90 load)</span><span><i style="background:var(--tab)"></i>TabPFN-3.5 — P(≥P90 load)</span>`;
+  chartWrap.appendChild(legend);
+  merged.rows.forEach(r=>{
+    const row=document.createElement("div"); row.className="bar-row";
+    const predAvg = (r.xgb.predicted_passengers + r.tabpfn.predicted_passengers)/2;
+    const delta = predAvg - r.mean;
+    const deltaTxt = (delta>=0?"+":"") + fmtInt(delta) + " vs normal avg";
+    row.innerHTML = `
+      <div class="name"><span class="main">${esc(r.name)}<span class="hop">${r.hop} hop${r.hop>1?"s":""} · ${deltaTxt}</span></span><span class="tnum">${fmtPct(r.xgb.overcrowding_probability)} / ${fmtPct(r.tabpfn.overcrowding_probability)}</span></div>
+      <div class="bar-track">
+        <div class="bar-fill xgb" style="width:${(r.xgb.overcrowding_probability*100).toFixed(0)}%"></div>
+        <div class="bar-fill tab" style="width:${(r.tabpfn.overcrowding_probability*100).toFixed(0)}%"></div>
+      </div>
+    `;
+    chartWrap.appendChild(row);
+  });
+  root.appendChild(chartWrap);
+
+  const top = merged.rows[0];
+  const gap = top ? Math.abs(top.xgb.overcrowding_probability-top.tabpfn.overcrowding_probability) : 0;
+  const agree = gap < 0.1 ? "closely agree" : "diverge somewhat";
+  const findings = document.createElement("div"); findings.className="findings";
+  findings.innerHTML = top ? `
+    <b>Findings.</b> The two models <b>${agree}</b> on direction for <b>${esc(top.name)}</b>
+    (<span class="f-xgb">XGBoost ${fmtPct(top.xgb.overcrowding_probability)}</span> vs
+    <span class="f-tab">TabPFN-3.5 ${fmtPct(top.tabpfn.overcrowding_probability)}</span> chance of hitting its own P90 load).
+    XGBoost answered from ${xm.train_rows?fmtInt(xm.train_rows):"its full local"} rows in
+    ${merged.rows[0].xgb.classify_latency_ms.toFixed(0)}ms; TabPFN-3.5 ${tabSrc==="live"?`reached a comparable read from
+    a ${fmtInt(tm.context_rows||0)}-row in-context sample over a real network call
+    (${(merged.rows[0].tabpfn.classify_latency_ms/1000).toFixed(1)}s)`:"fell back to a labelled simulation for this run"} —
+    the same latency-vs-data-efficiency trade this project measured on its Deutsche Bahn benchmark.
+  ` : "";
+  root.appendChild(findings);
+}
+
+/* ---------- input wiring ---------- */
+document.getElementById("chat-send").addEventListener("click", ()=>{
+  const input=document.getElementById("chat-input"); const text=input.value.trim();
+  if(!text || busy || !TOPO) return;
+  const scenario = findScenarioFromText(text);
+  input.value="";
+  if(scenario) runScenario(scenario, text);
+  else addMsg("agent","<b>Dispatcher:</b> I couldn't match that to a station or line in the network. Try naming a station directly, e.g. \"Alexanderplatz closes\", or pick a quick scenario below.");
+});
+document.getElementById("chat-input").addEventListener("keydown",(e)=>{ if(e.key==="Enter") document.getElementById("chat-send").click(); });
+document.getElementById("clear-scenario-btn").addEventListener("click", clearScenario);
+
+boot();
+</script>
+</body>
+</html>

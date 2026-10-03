@@ -1,0 +1,15 @@
+.env
+.venv/
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+results/model_cache/
+notebooks/__marimo__/
+*.egg-info/
+.DS_Store
+
+# Large third-party datasets kept local-only — see data/SOURCE.md for how to get each one.
+# Berlin_Ubahn_Alstom_data/ is the exception: small CSVs, intentionally committed (see README).
+data/DB_data/
+data/Finnish_Railway_Operations_data/
