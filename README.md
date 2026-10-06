@@ -1,236 +1,315 @@
-# NextMove-TabPFN
+# NextMove-TabPFN — U-Bahn Early-Warning Desk
 
-**A minimal agent that hands crowd-risk and demand questions to TabPFN-3.5 over MCP, benchmarked
-against a naive baseline on accuracy *and* speed — a deep dive into one model, for the
-[TabPFN-3.5 hackathon](https://platform.priorlabs.ai/hackathon-3.5).**
+**TabPFN-3.5 forecasts when Berlin U-Bahn stations will run off their normal pattern, and an LLM agent
+turns those forecasts into control-room answers over MCP, with charts as evidence.**
+Built for the [TabPFN-3.5 hackathon](https://platform.priorlabs.ai/hackathon-3.5) on the Alstom /
+InnoTrans 2026 Berlin U-Bahn dataset (168 stations, 8 lines).
 
-> *The same way an agent hands over to a weather tool if it needs a temperature, it should hand
-> over to a specialised model for predictions.* — the framing this hackathon asks for, and the
-> exact pattern this repo demonstrates.
+![Early-Warning Desk](docs/img/desk.png)
 
-## Where this came from
+> *The same way an agent hands over to a weather tool for a temperature, it should hand over to a
+> specialised model for predictions.* This repo is that hand-off, end to end: operator question → LLM →
+> MCP tool → TabPFN-3.5 → numbers + charts → recommended action.
 
-This project started from **[NextMove](https://github.com/mralioo/NextMove)**, a four-role
-multi-agent "AI team for the control room" (Dispatcher → Analyst ⇄ Inspector → Writer) built for
-the InnoTrans 2026 hackathon on this same Berlin U-Bahn dataset. NextMove used `tabpfn-client`
-(TabPFN v3.5) as one tool among many, behind a much larger pipeline. Working on it is what made the
-author genuinely curious about how good tabular foundation models have gotten — this repo pulls
-that one thread on its own: **just** TabPFN-3.5, prediction and classification, wrapped in the
-smallest agent harness that still demonstrates the tool-call hand-off pattern. It is not a rerun of
-NextMove's architecture.
+**Contents:** [Try it in 3 minutes](#try-it-in-3-minutes) · [The UI](#the-ui) ·
+[The use case](#the-use-case-forecast-the-anomaly-not-the-clock) · [Results](#results) ·
+[System design](#system-design) · [MCP tools](#mcp-tools) · [Notebooks](#notebooks) ·
+[Repository layout](#repository-layout) · [Data & license](#data-and-license)
 
-## The use case
+---
 
-Berlin U-Bahn station-level passenger flow, 15-minute resolution. Two TabPFN-3.5 models fit on one
-shared tabular feature table (time-of-day, weekday, weather, daily event load, closure state,
-station context):
-
-| Model | Task | Critical-use-case framing |
-| --- | --- | --- |
-| `TabPFNClassifier` | Will this station be at/above its own historical 90th-percentile flow in this 15-min slot? | **Early-warning** signal an operator acts on *before* a platform overfills — add staff, hold a train. |
-| `TabPFNRegressor` | Expected passenger count at this station/timestamp | Operational planning — staffing, train frequency. |
-
-Both are benchmarked (`tabpfn_lab/evaluate.py`) against a **historical-average baseline**
-(station × weekend-flag × hour lookup table) on a **chronologically held-out** test split — no
-date overlap with training. Honest result: on this dataset TabPFN-3.5 roughly **ties** that
-baseline (ROC-AUC 0.853 vs. 0.855; MAE 94.1 vs. 92.1) — the simulated flow is strongly periodic,
-so a one-line lookup table is already close to optimal, and no model clearly beats it. That's a
-real finding, not a weak result to hide: it's also *why* the refined use case and the second
-benchmark below exist.
-
-## The refined use case: anomaly early warning
-
-The p90 target above is mostly the clock (rush hours, night gap, weekends): over 80% of hourly
-log-flow variance is explained by a per-(station, day type, hour) profile alone. An operator does
-not need a model for that. They need to know when a station will run **off its normal pattern**
-because of a concert, a closure or the weather, early enough to act. `tabpfn_lab/anomaly.py`:
-
-1. **Normalise**: hourly flow per station, robust normal profile (median of `log1p(flow)` per
-   station × day type × hour, training weeks only), anomaly score
-   `z = residual / MAD(station, hour)`. `surge` = z ≥ 2, `drop` = z ≤ −2.
-2. **Attribute**: context known a day ahead. Events are mapped to the nearest U-Bahn station
-   (curated `VENUE_TO_STATION`) and ticket tiers deduplicated. Closures are resolved on the
-   network graph (line suspensions → stations on the segment). Weather is included as well.
-3. **Forecast** with five models on the same features: profile baseline (clock only), XGBoost
-   (clock only), XGBoost (context, full history), XGBoost (context, same 10k rows as TabPFN),
-   TabPFN-3.5 (10k-row in-context sample that includes every event/closure hour).
-4. **Evaluate** on two expanding-window folds: Alstom's own hold-out (`*_rest`, Sep 22–30,
-   InnoTrans week) and a Sep 1–21 backtest. Metrics are PR-AUC for surges, recall inside a 2%
-   alarm budget (overall, event-driven, closure collapses) and z error.
-
-**Real numbers** (`make anomaly`, both folds pooled, 100,200 test station-hours, surge rate 2.1%):
-
-| Model | Training rows | PR-AUC | Event surges caught | Closure collapses forecast |
-| --- | --- | --- | --- | --- |
-| Profile baseline (clock only) | all | 0.049 | 14% | 0% |
-| XGBoost, clock only | all | 0.074 | 16% | 0% |
-| XGBoost, context | 10k (same as TabPFN) | 0.068 | 39% | 92% |
-| **TabPFN-3.5, context** | **10k** | **0.089** | **58%** | **100%** |
-| XGBoost, context | 277k–347k (full) | 0.110 | 76% | 92% |
-
-Reading it plainly:
-- **Context is what makes early warning possible.** Clock-only models never forecast a closure
-  collapse and miss most event surges.
-- **At equal data, TabPFN-3.5 wins** (+31% PR-AUC, ~1.5× the event surges). The XGBoost learning
-  curve needs **~50k rows (5×)** to match TabPFN-3.5 at 10k.
-- **With the full history (28–35× more rows), XGBoost wins.** TabPFN-3.5 is the tool for
-  short-history situations (new station, venue or line; a new question that needs an answer
-  today, no pipeline). A trained GBM is the tool once months of labelled data exist. Both use
-  the same feature table.
-- Most |z| ≥ 2 hours in this simulated data have no known driver (noise). That caps precision
-  for every model. Line suspensions barely move flow and there is no spill-over to neighbouring
-  stations; a real network would show both.
-- Latency: TabPFN-3.5 fits in ~5 s and scores ~1–2 s per 1,000 station-hours over the API.
-  That suits a day-ahead plan (168 stations × 20 h ≈ 3,400 rows), not a sub-second loop.
-
-Walk-through: `notebooks/04_anomaly_early_warning.py`. Operator view: the **Early-Warning Desk**
-(`make dashboard-closures`, http://127.0.0.1:8000/).
-
-## A bigger, harder benchmark: TabPFN-3.5 vs. XGBoost on real railway data
-
-The Berlin dataset turned out too easy for a baseline comparison to be interesting. So
-`tabpfn_lab/db_data.py` + `tabpfn_lab/evaluate_db.py` run the same classification + regression
-pairing — same topic (railway operations), same country (Germany) — on a large, real, public
-dataset this time, against a real tuned model, **XGBoost**, not a heuristic:
-
-**[Deutsche Bahn delay data](https://huggingface.co/datasets/piebro/deutsche-bahn-data)**
-(CC BY 4.0, via the [piebro/deutsche-bahn-data](https://github.com/piebro/deutsche-bahn-data)
-project, built from DB's own public timetable/delay feeds) — one month (June 2025) of real German
-train stops: **1.5M rows**, 107 major stations, every train type from S-Bahn to ICE. Fetched via
-`huggingface_hub.hf_hub_download` (no auth for this public dataset, reproducible with one
-function call). Two targets from the same `delay_in_min` column (mirroring both the Berlin pair
-above and the convention used in published railway-delay research, e.g. the FI-TW paper's 5-minute
-threshold): classification = delayed ≥5 min vs. on time, regression = delay in minutes (outlier
--clipped to [-15, 120]).
-
-TabPFN-3.5 is fit on a 10,000-row in-context sample; XGBoost is fit on the **full** chronological
-training split (~1.2M rows) — deliberately not a fair fight on data volume, because that asymmetry
-*is* the point being tested.
-
-**Real numbers** (`python scripts/train_and_eval_db.py`, run 2026-10-01, chronological split —
-last days of June held out):
-
-| | TabPFN-3.5 (10k rows) | XGBoost (~1.2M rows) | Gap |
-| --- | --- | --- | --- |
-| Classification ROC-AUC | 0.734 | 0.751 | −2.3% relative |
-| Regression MAE, minutes | **4.64** | 4.66 | **TabPFN slightly lower** |
-| Fit time | 4.3s / 4.2s | 5.9s / 5.7s | comparable (XGBoost not slower here) |
-| Predict time, 5k rows | 2.6s / 2.7s | 0.01s / 0.01s | **XGBoost much faster** (local compute vs. a network API call per batch) |
-
-Reported plainly, including where XGBoost wins: **inference latency is not where TabPFN-3.5 wins
-here** — it pays a network round-trip XGBoost doesn't. What it does win is **data efficiency**:
-on classification it's within ~2% of XGBoost's ROC-AUC, and on the regression task it actually
-**matches-or-beats** XGBoost's MAE — both from **under 1% of the training data**
-(10,000 of ~1.2 million rows) and zero feature/hyperparameter tuning. The realistic pitch isn't
-"faster than XGBoost at inference" — it's "a usable, competitive model from a `.fit()` call on a
-small sample, when you don't have the data volume, time, or tuning budget to build the XGBoost
-pipeline in the first place."
-
-## Architecture
-
-```
-data/                  Berlin_Ubahn_Alstom_data/ (committed) · DB_data/ · Finnish_Railway_Operations_data/ (both gitignored)
-   │                   — see data/SOURCE.md for provenance of all three
-   ▼
-tabpfn_lab/
-   ├── datasets/       one loader module per dataset: berlin.py, deutsche_bahn.py, finnish.py
-   ├── models.py, baselines.py, xgboost_baseline.py       TabPFN-3.5 / baseline / XGBoost wrappers
-   ├── evaluate.py, evaluate_db.py                         benchmark runners
-   ├── mcp_server/     FastMCP server exposing the two predict_* tools (+ resolve_station, describe_dataset)
-   ├── agent/          one LLM tool-calling loop (LiteLLM) over the MCP server — picks the tool by use case
-   ├── anomaly.py      anomaly early warning: normal profile + z, event/closure/weather context,
-   │                   profile baseline / XGBoost / TabPFN-3.5 on two folds -> results/anomaly/
-   ├── closure_impact.py   what-if engine behind webapp/ — real BFS + XGBoost + TabPFN-3.5 scoring
-   ├── dashboard/      Streamlit, multi-page: Overview · Berlin Explore · Finnish Explore ·
-   │                   Live Prediction · Benchmark (Berlin) · Benchmark (Deutsche Bahn)
-   ├── webapp/         Starlette app, two pages: Early-Warning Desk (/) — anomaly map, timeline,
-   │                   scenarios, model scoreboard, live TabPFN-3.5 re-score; Closure Impact Lab
-   │                   (/closures) — map + chat what-if for hypothetical station/line closures
-   └── notebooks/      marimo notebooks, one per use case — data EDA, demand/overcrowding,
-                        closure impact + network resilience, energy forecasting, anomaly early warning
-```
-
-Two separate dashboards, two different jobs: `dashboard/` (Streamlit) is for *exploring* the
-datasets and benchmarks; `webapp/` is the operator view. Its home page, the **Early-Warning
-Desk**, replays the test weeks hour by hour: stations coloured by forecast or actual anomaly z,
-alarm rings from the selected model, a timeline of alarms vs. actual surges, scenario cards
-(events, closures, rain) with each model's verdict and a suggested action, and a one-click live
-TabPFN-3.5 re-score. It reads `results/anomaly/` (`make anomaly`). The **Closure Impact Lab**
-(`/closures`) is the live *what-if* tool: pick a real closure scenario and it runs XGBoost and
-TabPFN-3.5 inference on the affected stations side by side. `make dashboard-streamlit` vs.
-`make dashboard-closures`.
-
-`notebooks/` (`make notebooks`) is where the use cases themselves got worked out: each marimo
-notebook loads real data, does its own cleaning/preprocessing, and benchmarks TabPFN-3.5 against
-XGBoost and a baseline for one specific question an operator (or an LLM agent) might ask — see
-[`notebooks/README.md`](notebooks/README.md) for what each one covers.
-
-No multi-agent pipeline, no knowledge graph, no ground-truth verification loop — see
-[`ROADMAP.md`](ROADMAP.md)'s "explicitly out of scope" section for why, and NextMove if you want
-that fuller system. Full module-by-module layout, including the planned next phase (a scientific,
-same-methodology comparison of TabPFN-3.5 against other models across all three datasets):
-[`docs/MODULES.md`](docs/MODULES.md).
-
-## Data exploration
-
-Before any modeling decision, two dashboard pages just look at the data: **Berlin — Explore**
-(network map + fragmentation risk, passenger flow, events, weather correlation, closures, energy)
-and **Finnish — Explore** (delay distribution, weather relationship, time-of-day/weekday
-patterns, station map, and a multi-year punctuality-drift check across the dataset's 2018-2025
-span — punctuality measurably got worse over the years, which is why the loaders all use a
-chronological, not random, train/test split). The Finnish dataset (biggest of the three, real,
-multi-year — see `data/SOURCE.md`) is exploration-only for now; see `docs/MODULES.md` for the
-plan to bring it into the same benchmark structure as Berlin and Deutsche Bahn.
-
-## Quickstart
+## Try it in 3 minutes
 
 ```bash
 git clone <this-repo-url> && cd nextmove-tabpfn
-make install    # venv + pip install -r requirements.txt
-
-cp .env.example .env
-# edit .env: TABPFN_API_TOKEN (free, https://platform.priorlabs.ai/account/api-keys)
-#            AGENT_LITELLM_MODEL + OPENAI_API_KEY (or another LiteLLM-supported provider)
-
-make test                # data/feature smoke tests, no API calls needed
-make dashboard-streamlit  # streamlit: Berlin/Finnish exploration + live prediction + both benchmarks
-make anomaly              # anomaly early warning: baseline / XGBoost / TabPFN-3.5 on 2 folds -> results/anomaly/ (~4 min)
-make anomaly-offline      # same without TabPFN-3.5 API calls (~30 s)
-make dashboard-closures   # webapp: Early-Warning Desk (/) + Closure Impact Lab (/closures) -> http://127.0.0.1:8000
-make notebooks            # marimo exploration notebooks: one per use case, loads real data + fits real models
-make cli                  # interactive agent: ask a crowd-risk or demand question
-make train                # Berlin: TabPFN-3.5 vs. historical baseline -> results/metrics.json
-make train-db             # Deutsche Bahn: TabPFN-3.5 vs. XGBoost -> results/metrics_db.json
-make help                 # list every target
+make install                 # venv + requirements
+cp .env.example .env         # TABPFN_API_TOKEN (free: https://platform.priorlabs.ai/account/api-keys)
+                             # AGENT_LITELLM_MODEL + its key (default gpt-4o-mini / OPENAI_API_KEY)
+make app                     # → http://127.0.0.1:8000
 ```
 
-(No `make`? The underlying commands are plain `python -m venv .venv`, `pip install -r
-requirements.txt`, `pytest tests/`, `streamlit run dashboard/app.py`,
-`uvicorn webapp.server:app --port 8000`, `marimo edit notebooks/`, `python agent/cli.py`,
-`python scripts/train_and_eval.py`, `python scripts/train_and_eval_db.py`,
-`python scripts/run_anomaly_benchmark.py` — see `Makefile`.)
+1. **http://127.0.0.1:8000** opens the **Early-Warning Desk**. A guided walkthrough pops up on the first
+   visit; reopen it any time with **? Guide** (top right).
+2. Click a **scenario** on the right (e.g. a concert), scrub the **timeline**, and press **⚡ Re-score
+   live** for a real TabPFN-3.5 call.
+3. Open **② Control-Room Agent** (top tab) and press a preset question. The answer comes with evidence
+   charts and the full MCP tool trace.
 
-Example CLI questions:
-- `"will Alexanderplatz be overcrowded at 2026-07-15 08:00:00?"` → agent calls `resolve_station`,
-  then routes to `predict_overcrowding_risk`
-- `"how many passengers are expected at U Rudow (Berlin) on 2026-08-01 17:30:00?"` → routes to
-  `predict_expected_flow`
+`results/anomaly/` is committed, so everything works right away. `make anomaly` recomputes it (live
+TabPFN-3.5, ~4 min); `make anomaly-offline` skips the API (~30 s). Without a TabPFN token, the live tools
+fall back to XGBoost and say so. `make test` runs 15 tests with no API calls; `make help` lists every target.
 
-## Data
+Demo links: `/?tour=1` starts the desk walkthrough, `/agent?q=<question>` asks the agent on load.
 
-`data/Berlin_Ubahn_Alstom_data/` — generated by **Alstom's data team** for the **InnoTrans 2026
-hackathon**, reused here unmodified and committed to the repo. Full attribution and schema:
-[`data/SOURCE.md`](data/SOURCE.md) (all three datasets),
-[`data/Berlin_Ubahn_Alstom_data/dataset_schema.md`](data/Berlin_Ubahn_Alstom_data/dataset_schema.md).
+---
 
-The Deutsche Bahn and Finnish datasets are **not** committed to this repo. Deutsche Bahn is
-fetched on demand from Hugging Face (see `tabpfn_lab/datasets/deutsche_bahn.py`) — a public,
-stable, citable source (CC BY 4.0) satisfying the hackathon's "available at a public URL" rule
-without a multi-GB parquet file in version control. The Finnish dataset was placed locally from
-Kaggle (see `data/SOURCE.md` for the reproducibility caveat this one has that the other two
-don't).
+## The UI
 
-## License
+Two pages, switched with the tabs at the top. Each page has its own **? Guide** walkthrough.
 
-Apache License 2.0 — see [`LICENSE`](LICENSE). Applies to the code in this repository; see
-[`data/SOURCE.md`](data/SOURCE.md) for the data's own provenance.
+### ① Early-Warning Desk (`/`) — the network, hour by hour
+
+| Area | What it shows | How to use it |
+| --- | --- | --- |
+| **Top bar** | Test window (Alstom hold-out / backtest), model, forecast-vs-actual switch | Every panel follows these three choices |
+| **Network map** | 168 stations coloured by anomaly z (red = busier than normal, blue = emptier); **red ring** = surge alarm (the model's top 2% of station-hours) | Hover for numbers; click a station to load its charts |
+| **Timeline** | Alarms per hour (bars) vs surges that really happened (line) | Click or drag, ▶ Play, ← → keys |
+| **Model scoreboard** | PR-AUC, event surges caught, closures forecast, rows used, scoring time, per window | Click a row to switch the model |
+| **Scenarios** | Real concerts, closures and rain spells, ranked by how unusual they were; ✓ = which models raised the alarm | Click one: map, timeline and charts jump to it |
+| **Scenario card** | Cause, the forecast in words, a suggested **action**, each model's verdict | **⚡ Re-score live** makes a real TabPFN-3.5 API call (dashed line) |
+| **Station charts** | Flow vs normal vs forecast; actual z vs each model's forecast z, with ▼ alarm marks | Hover for values; click a point to jump to that hour |
+| **Line corridor** | Every station of a line in running order: forecast load vs normal for the selected hour | Pick a line; scrub the timeline to watch load move along it |
+| **Alarm feed** | This hour's alarms, their drivers and the real outcome (✓) | Click to open the station |
+
+![Guided walkthrough](docs/img/walkthrough.png)
+
+### ② Control-Room Agent (`/agent`) — ask in plain language
+
+The LLM picks MCP tools, the tools run the TabPFN-3.5 engine, and the answer may only use numbers the tools
+returned. Every answer has three parts:
+
+1. **The answer**: a bold forecast headline, the drivers and what was observed, an **Action**, and the source.
+2. **Evidence**: charts drawn from the exact tool results behind the answer (what-if before/after with the
+   alarm threshold, neighbour impact, load per line, the corridor profile, every model vs normal vs
+   observed, the learning curve).
+3. **Tool trace**: every MCP call with its arguments, latency and raw result.
+
+![Agent: what-if with evidence charts](docs/img/agent_whatif.png)
+
+<details><summary>More: the honest model-comparison answer</summary>
+
+![Agent: scoreboard with evidence](docs/img/agent_scoreboard.png)
+</details>
+
+The agent also runs in the terminal (`make agent`) and inside notebook `02`. The MCP server works with any
+MCP client (`make mcp`, stdio). For example, in Claude Desktop:
+
+```json
+{ "mcpServers": { "tabpfn-ubahn": {
+    "command": "/absolute/path/to/repo/.venv/bin/python",
+    "args": ["/absolute/path/to/repo/mcp_server/server.py"] } } }
+```
+
+---
+
+## The use case: forecast the anomaly, not the clock
+
+Raw passenger flow is mostly the daily and weekly rhythm: over 80% of hourly variance is explained by a
+station × day type × hour profile alone. A model asked "will this station be above its own p90?" learns
+that clock, and so does a lookup table: they tie (notebook `01`, ROC-AUC 0.855 vs 0.853). An operator
+doesn't need a model to know that 08:00 is busy. They need to know when 08:00 will be **busier, or
+emptier, than a normal 08:00**, and why, early enough to act.
+
+1. **Normalise.** Hourly flow per station; the robust normal is the median of `log1p(flow)` per station ×
+   day type × hour, from training weeks only. Anomaly score `z = residual / MAD(station, hour)`.
+   Surge = `z ≥ 2`, collapse = `z ≤ −2`.
+2. **Attribute.** Context known a day ahead:
+   - events mapped to their nearest U-Bahn station (a curated venue map; 442 of 457 events mapped, ticket tiers deduplicated)
+   - planned closures resolved on the network graph (a line suspension closes every station on the segment)
+   - weather
+   - station descriptors
+3. **Forecast with TabPFN-3.5.** `TabPFNClassifier` gives the surge probability and `TabPFNRegressor` the
+   expected z, so expected passengers = normal × e^(z·spread). Both use a 10k-row in-context sample that
+   contains every event and closure hour. No training loop, no tuning.
+4. **Compare honestly** against four baselines on two expanding-window folds:
+   - Alstom's own hold-out (`*_rest` files, Sep 22–30, the InnoTrans week)
+   - a Sep 1–21 backtest
+
+   The alarm rule is each model's top 2% of station-hours.
+5. **Read it across the network.** Station forecasts are aggregated per line and laid out in running order
+   (the **line corridor**), so you see where along a line the load builds or collapses.
+
+## Results
+
+`make anomaly`, both folds pooled, 100,200 test station-hours, surge rate 2.1%:
+
+| Model | Training rows | PR-AUC (surge) | Event surges caught | Station closures forecast |
+| --- | --- | --- | --- | --- |
+| Profile baseline (clock only) | all | 0.049 | 14% | 0% |
+| XGBoost, clock features only | all | 0.074 | 16% | 0% |
+| XGBoost, context | 10k (same rows as TabPFN) | 0.068 | 39% | 92% |
+| **TabPFN-3.5, context** | **10k in-context** | **0.089** | **58%** | **100%** |
+| XGBoost, context | 277k–347k (full history) | 0.110 | 76% | 92% |
+
+- **Context makes early warning possible.** Clock-only models never forecast a closure collapse and miss
+  most event surges.
+- **At equal data, TabPFN-3.5 wins clearly:** +31% PR-AUC and about 1.5× the event surges caught. XGBoost's
+  learning curve needs **~50k (hold-out) to ~100k (backtest) rows, 5–10× more**, to match TabPFN-3.5's
+  10k-row context.
+- **With the full history (28–35× more rows), XGBoost is better.** TabPFN-3.5 is the engine for short-history
+  situations: a new station, venue or rebuilt line, or a new question that needs an answer today without a
+  training pipeline. A trained GBM fits once months of clean labels exist. Both run on the same feature table.
+- **Latency:** TabPFN-3.5 fits in ~5 s and scores about 1–2 s per 1,000 station-hours over the API, with
+  occasional spikes. That's fine for day-ahead or hour-ahead plans (168 stations × 20 h ≈ 3,400 rows).
+- **Limits of the data:** flows and closures are simulated. Most |z| ≥ 2 hours have no known driver (noise),
+  which caps precision for every model. Line suspensions barely move flow, and there is no spill-over to
+  neighbouring stations; a real network would show both.
+
+**Supporting evidence on real data** (`make train-db`): on Deutsche Bahn delays
+([piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data), CC BY 4.0,
+June 2025, 1.5M stops), TabPFN-3.5 with 10k rows reaches ROC-AUC 0.734 vs 0.751 and MAE **4.64** vs 4.66 min
+for XGBoost trained on ~1.2M rows.
+
+---
+
+## System design
+
+### Components
+
+```mermaid
+flowchart LR
+    subgraph DATA["Data · data/Berlin_Ubahn_Alstom_data"]
+        D1[(flows · 15 min)]
+        D2[(stations + connections)]
+        D3[(events · weather · closures)]
+    end
+
+    subgraph ENGINE["Engine · tabpfn_lab/"]
+        L["datasets/berlin.py<br/>loaders + network graph"]
+        A["anomaly.py<br/>normal profile · z · context features<br/>5 models · 2-fold benchmark"]
+        O["operations.py<br/>outlook · corridor · forecast<br/>explain · what-if · scoreboard"]
+        R[("results/anomaly/<br/>metrics · scenarios · predictions")]
+    end
+
+    T{{"TabPFN-3.5 API<br/>tabpfn_client"}}
+    LLM{{"LLM via LiteLLM<br/>gpt-4o-mini or any"}}
+
+    subgraph IFACE["Interfaces"]
+        M["mcp_server/server.py<br/>9 MCP tools"]
+        H["agent/harness.py<br/>tool-calling loop + trace"]
+        W["webapp/server.py<br/>Starlette REST"]
+    end
+
+    subgraph UI["Clients"]
+        U1["① Early-Warning Desk<br/>warning.html"]
+        U2["② Control-Room Agent<br/>agent.html"]
+        U3["notebooks/ · marimo"]
+        U4["CLI · Claude Desktop<br/>any MCP client"]
+    end
+
+    D1 & D2 & D3 --> L --> A
+    A -- "make anomaly" --> R
+    A <--> T
+    R --> O
+    A --> O
+    O <--> T
+    O --> M
+    M <--> H
+    H <--> LLM
+    O --> W
+    H --> W
+    W --> U1 & U2
+    O --> U3
+    M --> U4
+```
+
+### What happens when an operator asks a question
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator
+    participant UI as Agent page (agent.html)
+    participant API as webapp /api/agent/ask
+    participant H as agent/harness.py
+    participant LLM as LLM (LiteLLM)
+    participant MCP as MCP server (fastmcp)
+    participant OPS as operations.py
+    participant TP as TabPFN-3.5 API
+
+    Op->>UI: "A 3,000-person concert ends at Olympia-Stadion at 22:00. What happens?"
+    UI->>API: POST {question, history}
+    API->>H: ask(question)
+    H->>MCP: list_tools()
+    H->>LLM: question + system prompt + 9 tool schemas
+    LLM-->>H: tool_call what_if(station, start, attendance, event_end)
+    H->>MCP: call_tool("what_if", args)
+    MCP->>OPS: what_if(...)
+    OPS->>OPS: build rows: as scheduled + with the hypothetical event
+    OPS->>TP: fit 10k-row context (once per process) + predict both in one batch
+    TP-->>OPS: surge probability + forecast z per hour
+    OPS-->>MCP: as-scheduled vs what-if, alarm flags, peak change
+    MCP-->>H: structured result
+    H->>LLM: tool result
+    LLM-->>H: answer written only from the returned numbers
+    H-->>API: {answer, trace with full tool results}
+    API-->>UI: JSON
+    UI-->>Op: answer + evidence charts + tool trace
+```
+
+### From raw CSVs to an alarm
+
+```mermaid
+flowchart TD
+    A["15-min flows per station"] --> B["Hourly flow · service hours 00, 05–23"]
+    B --> C["Normal profile<br/>median log1p(flow) per station × day type × hour<br/>(training weeks only)"]
+    C --> D["Anomaly z = residual / MAD(station, hour)<br/>surge z ≥ 2 · collapse z ≤ −2"]
+    E["Context known a day ahead<br/>events → nearest station · closures on the graph · weather"] --> F
+    D --> F["Feature table · 100k+ station-hours"]
+    F --> G{"Fold split<br/>hold-out Sep 22–30 · backtest Sep 1–21"}
+    G --> H1["Profile baseline"]
+    G --> H2["XGBoost: clock only · 10k · full history"]
+    G --> H3["TabPFN-3.5: 10k in-context sample<br/>all event/closure hours included"]
+    H1 & H2 & H3 --> I["Surge probability + forecast z per station-hour"]
+    I --> J{"In the model's top 2%<br/>of station-hours?"}
+    J -- yes --> K["ALARM → map ring · alarm feed · agent"]
+    J -- no --> L2["normal or soft shift"]
+    I --> M["Evaluation: PR-AUC · event recall · closure recall · learning curve"]
+```
+
+---
+
+## MCP tools
+
+| Tool | Answers | TabPFN-3.5 |
+| --- | --- | --- |
+| `describe_network` | coverage, valid timestamps, models | — |
+| `resolve_station` | "Kotti", "Alex" → exact station names | — |
+| `network_outlook` | what to watch at an hour: alarms + drivers, load vs normal per line | precomputed day-ahead run |
+| `line_corridor` | forecast load along one line, terminus to terminus | precomputed day-ahead run |
+| `station_forecast` | one station hour by hour vs XGBoost and the observed outcome | **live** |
+| `explain_anomaly` | why a station-hour was off pattern: drivers, all models, station history | precomputed day-ahead run |
+| `what_if` | hypothetical event, closure (neighbours scored too) or rain, vs as scheduled | **live** |
+| `list_scenarios` | real incidents and which models flagged them | precomputed day-ahead run |
+| `model_scoreboard` | honest benchmark, key findings, learning curve | — |
+
+## Notebooks
+
+`make notebooks` (marimo, reactive, plain `.py`):
+`00` data quality & EDA · `01` why the p90 target fails (the motivation) · `02` **anomaly early warning**:
+oscillation → normalisation → drivers → model comparison and learning curve → scenario replay → alarm feed →
+network outlook and line corridor → live what-if → the agent. Live API cells sit behind buttons.
+
+## Repository layout
+
+```
+data/Berlin_Ubahn_Alstom_data/      Alstom/InnoTrans 2026 dataset (committed) — see data/SOURCE.md
+tabpfn_lab/
+  datasets/berlin.py                loaders: flows, stations, graph, events, weather, closures
+  anomaly.py                        normal profile + z, context features, models, 2-fold benchmark
+  operations.py                     operator queries: outlook, corridor, forecast, explain, what-if
+  datasets/deutsche_bahn.py, evaluate_db.py, xgboost_baseline.py   supporting DB benchmark
+mcp_server/server.py                FastMCP: the engine as 9 tools
+agent/harness.py, cli.py            LiteLLM tool-calling loop over the MCP server, with trace
+webapp/server.py                    Starlette, no build step
+webapp/static/warning.html          ① Early-Warning Desk        webapp/static/agent.html   ② Control-Room Agent
+webapp/static/tour.js               guided walkthrough shared by both pages
+notebooks/00, 01, 02                marimo: EDA · why p90 fails · anomaly early warning
+scripts/run_anomaly_benchmark.py    make anomaly → results/anomaly/
+tests/                              engine, operations, MCP tool surface (no API calls)
+docs/img/                           screenshots used in this README
+```
+
+## Where this came from
+
+This project grew out of **[NextMove](https://github.com/mralioo/NextMove)**, a multi-agent "AI team for the
+control room" built for the InnoTrans 2026 hackathon on the same dataset, where TabPFN v3.5 was one tool
+among many. This repo goes deep on that one thread: TabPFN-3.5 as the prediction engine behind an MCP tool
+surface, a small, transparent agent and an operator UI.
+
+## Data and license
+
+`data/Berlin_Ubahn_Alstom_data/` was generated by **Alstom's data team** for the InnoTrans 2026 hackathon and
+is reused unmodified. Provenance and schema: [`data/SOURCE.md`](data/SOURCE.md),
+[`dataset_schema.md`](data/Berlin_Ubahn_Alstom_data/dataset_schema.md). Deutsche Bahn data is fetched on
+demand from Hugging Face. Code: Apache License 2.0 ([`LICENSE`](LICENSE)).
