@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>U-Bahn Early-Warning Desk</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* layout: control room — map + timeline left, station/scenario detail below, scoreboard + scenarios + alarm feed rail right; one column under 1100px */
+:root{
+  --bg:#0b0f14; --bg-elev:#121821; --surface:#171f2b; --surface-2:#1e283a;
+  --border:#2a3547; --fg:#e8edf3; --fg-muted:#8a96a8; --fg-faint:#5c6a7e;
+  --accent:#5fc3e4; --accent-dim:#2c5a6c;
+  --good:#0ca30c; --warn:#fab219; --danger:#d03b3b;
+  /* models — categorical slots, dark steps (validated) */
+  --m-tabpfn:#3987e5; --m-xgb_full:#d95926; --m-xgb_small:#199e70; --m-xgb_profile:#c98500; --m-profile:#8a8984;
+  /* drivers */
+  --d-event:#d55181; --d-closure:#9085e9; --d-rain:#008300; --d-heat:#008300; --d-none:#5c6a7e;
+  /* diverging z: drop (blue) <- neutral -> surge (red) */
+  --z-neg:#3987e5; --z-mid:#383835; --z-pos:#e66767;
+  --ink:#e8edf3; --band:rgba(138,150,168,.16); --grid:rgba(138,150,168,.14);
+  --mono:'IBM Plex Mono',ui-monospace,monospace; --sans:'IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --bg:#eef1f4; --bg-elev:#ffffff; --surface:#ffffff; --surface-2:#f2f5f8;
+    --border:#d7dee6; --fg:#121823; --fg-muted:#56657a; --fg-faint:#8795a8;
+    --accent:#1b7fa3; --accent-dim:#cfe8f0;
+    --m-tabpfn:#2a78d6; --m-xgb_full:#eb6834; --m-xgb_small:#1baf7a; --m-xgb_profile:#eda100; --m-profile:#8a8984;
+    --d-event:#e87ba4; --d-closure:#4a3aa7; --d-rain:#008300; --d-heat:#008300; --d-none:#b5b4ae;
+    --z-neg:#2a78d6; --z-mid:#f0efec; --z-pos:#e34948;
+    --ink:#121823; --band:rgba(86,101,122,.13); --grid:rgba(86,101,122,.13);
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#eef1f4; --bg-elev:#ffffff; --surface:#ffffff; --surface-2:#f2f5f8;
+  --border:#d7dee6; --fg:#121823; --fg-muted:#56657a; --fg-faint:#8795a8;
+  --accent:#1b7fa3; --accent-dim:#cfe8f0;
+  --m-tabpfn:#2a78d6; --m-xgb_full:#eb6834; --m-xgb_small:#1baf7a; --m-xgb_profile:#eda100; --m-profile:#8a8984;
+  --d-event:#e87ba4; --d-closure:#4a3aa7; --d-rain:#008300; --d-heat:#008300; --d-none:#b5b4ae;
+  --z-neg:#2a78d6; --z-mid:#f0efec; --z-pos:#e34948;
+  --ink:#121823; --band:rgba(86,101,122,.13); --grid:rgba(86,101,122,.13);
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);margin:0;font-size:13px;line-height:1.45}
+button,select,input{font-family:inherit;font-size:inherit;color:inherit}
+.tnum,.mono{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--mono)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
+
+.app{display:grid;grid-template-columns:minmax(0,1fr) 410px;grid-template-rows:auto minmax(420px,1fr) auto;
+  grid-template-areas:"top top" "map rail" "detail rail";min-height:100dvh}
+@media (max-width:1100px){.app{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "map" "detail" "rail";grid-template-rows:auto auto auto auto}}
+
+/* top bar */
+.topbar{grid-area:top;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;background:var(--bg-elev);border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 30%,transparent)}
+.brand small{display:block;font-weight:400;color:var(--fg-muted);font-size:11px}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-left:auto}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:var(--surface)}
+.seg button{background:none;border:0;padding:5px 10px;cursor:pointer;color:var(--fg-muted);font-weight:500}
+.seg button[aria-pressed="true"]{background:var(--accent-dim);color:var(--fg)}
+.ctl-label{font-size:10.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.4px}
+select{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 8px}
+.navlink{color:var(--accent);text-decoration:none;font-weight:500;padding:5px 9px;border:1px solid var(--border);border-radius:7px}
+.navlink:hover{border-color:var(--accent)}
+
+/* map pane */
+.map-pane{grid-area:map;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border)}
+.hour-head{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg-elev)}
+.hour-big{font-family:var(--mono);font-size:20px;font-weight:600;line-height:1.1}
+.hour-big small{display:block;font-family:var(--sans);font-size:11px;color:var(--fg-muted);font-weight:400}
+.kpis{display:flex;gap:16px;flex-wrap:wrap}
+.kpi .l{font-size:10px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.4px}
+.kpi .v{font-family:var(--mono);font-size:15px;font-weight:600}
+.legend{margin-left:auto;display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--fg-muted)}
+.ramp{display:flex;align-items:center;gap:6px}
+.ramp .bar{width:150px;height:9px;border-radius:3px;background:linear-gradient(90deg,var(--z-neg),var(--z-mid),var(--z-pos))}
+.ring-key{display:inline-block;width:11px;height:11px;border-radius:50%;border:2px solid var(--danger);vertical-align:-2px;margin-right:4px}
+.map-stage{position:relative;flex:1;min-height:360px}
+.map-stage svg{position:absolute;inset:0;width:100%;height:100%}
+.tip{position:absolute;pointer-events:none;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:8px 10px;
+  font-size:11.5px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:10;min-width:190px;display:none}
+.tip b{font-weight:600}
+.tip .row{display:flex;justify-content:space-between;gap:12px}
+.tip .row span:last-child{font-family:var(--mono)}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:0}
+
+.timeline{border-top:1px solid var(--border);background:var(--bg-elev);padding:6px 12px 8px}
+.tl-head{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--fg-muted);margin-bottom:2px;flex-wrap:wrap}
+.tl-head .btn{padding:2px 9px}
+.tl-svg{width:100%;height:84px;display:block;cursor:crosshair;touch-action:none}
+
+/* detail pane */
+.detail{grid-area:detail;border-right:1px solid var(--border);border-top:1px solid var(--border);padding:12px 14px 16px;background:var(--bg);min-width:0}
+.detail h3{margin:0;font-size:15px}
+.detail .sub{color:var(--fg-muted);font-size:11.5px}
+.charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-top:10px}
+@media (max-width:820px){.charts{grid-template-columns:minmax(0,1fr)}}
+.chart-box{background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;padding:8px 10px;position:relative;min-width:0}
+.chart-box h4{margin:0 0 2px;font-size:11.5px;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.4px}
+.chart-box svg{width:100%;height:210px;display:block}
+.chart-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--fg-muted);margin-top:2px}
+.scen-card{border:1px solid var(--border);border-left:4px solid var(--danger);border-radius:10px;background:var(--bg-elev);padding:10px 12px;margin-bottom:10px}
+.scen-card.drop{border-left-color:var(--z-neg)}
+.scen-card .kind{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg-muted);font-weight:600}
+.scen-card .title{font-weight:600;font-size:14px;margin:1px 0 3px}
+.scen-card .cause{color:var(--fg-muted);font-size:12px}
+.reco{margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--surface-2);font-size:12.5px}
+.reco b{color:var(--fg)}
+.verdicts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.verdict{display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px;background:var(--surface)}
+.verdict .ic{font-weight:700}
+.verdict.hit .ic{color:var(--good)} .verdict.miss .ic{color:var(--fg-faint)}
+.btn{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--accent)}
+.btn:disabled{opacity:.55;cursor:progress}
+.live-note{font-size:11.5px;color:var(--fg-muted);margin-left:8px}
+.empty{color:var(--fg-muted);padding:16px;border:1px dashed var(--border);border-radius:10px}
+
+/* rail */
+.rail{grid-area:rail;background:var(--bg-elev);display:flex;flex-direction:column;min-height:0;overflow:auto}
+@media (min-width:1101px){.rail{max-height:100dvh;position:sticky;top:0}}
+.sec{border-bottom:1px solid var(--border);padding:10px 12px}
+.sec-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.sec-h h2{margin:0;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg-muted);font-weight:600}
+.sec-h .hint{font-size:10.5px;color:var(--fg-faint)}
+.score{width:100%;border-collapse:collapse;font-size:11.5px}
+.score th{font-weight:500;color:var(--fg-muted);text-align:right;padding:3px 4px;font-size:10.5px;white-space:nowrap}
+.score th:first-child,.score td:first-child{text-align:left}
+.score td{padding:5px 4px;border-top:1px solid var(--border);text-align:right;font-family:var(--mono);white-space:nowrap}
+.score td:first-child{font-family:var(--sans);white-space:normal}
+.score tr.sel td{background:color-mix(in srgb,var(--accent-dim) 45%,transparent)}
+.score tr{cursor:pointer}
+.mbar{display:inline-block;height:6px;border-radius:0 3px 3px 0;vertical-align:1px;margin-right:5px}
+.note{font-size:11.5px;color:var(--fg-muted);margin-top:8px}
+.note b{color:var(--fg)}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chipbtn{border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:2px 9px;font-size:11px;cursor:pointer;color:var(--fg-muted)}
+.chipbtn[aria-pressed="true"]{color:var(--fg);border-color:var(--accent)}
+.scen-list{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow:auto;padding-right:2px}
+.scen{border:1px solid var(--border);border-radius:8px;padding:7px 9px;cursor:pointer;background:var(--surface);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}
+.scen:hover,.scen.active{border-color:var(--accent)}
+.scen .t{font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scen .m{font-size:11px;color:var(--fg-muted);grid-column:1/2}
+.zbadge{font-family:var(--mono);font-size:11.5px;font-weight:600;padding:1px 6px;border-radius:5px;align-self:start;text-align:right}
+.zbadge.pos{background:color-mix(in srgb,var(--z-pos) 22%,transparent)} .zbadge.neg{background:color-mix(in srgb,var(--z-neg) 22%,transparent)}
+.mini-v{grid-column:1/3;display:flex;gap:8px;font-size:10.5px;color:var(--fg-muted)}
+.mini-v span b{font-weight:700}
+.dkind{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0}
+.feed{display:flex;flex-direction:column;gap:4px}
+.feed-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:5px 7px;border-radius:6px;cursor:pointer;font-size:12px;border:1px solid transparent}
+.feed-row:hover{border-color:var(--border);background:var(--surface)}
+.feed-row .p{font-family:var(--mono);font-size:11.5px}
+.feed-row .o{font-size:11px;font-family:var(--mono)}
+.err{margin:24px;padding:16px;border:1px solid var(--danger);border-radius:10px;background:var(--bg-elev)}
+details.method{font-size:11.5px;color:var(--fg-muted)}
+.score-wrap{overflow-x:auto}
+@media (max-width:700px){
+  .controls{margin-left:0}
+  .legend{margin-left:0}
+  .ramp .bar{width:90px}
+  .kpis{gap:10px}
+  .kpi .v{font-size:13px}
+  .hour-big{font-size:17px}
+  .map-stage{min-height:300px}
+  .tl-head span:last-child{margin-left:0!important}
+}
+details.method summary{cursor:pointer;color:var(--fg);font-weight:500}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span><div>U-Bahn Early-Warning Desk<small>Berlin · Alstom simulated flows · anomalies vs each station's normal pattern</small></div></div>
+    <div class="controls">
+      <span class="ctl-label">Window</span>
+      <div class="seg" id="fold-seg"></div>
+      <span class="ctl-label">Model</span>
+      <select id="model-sel" aria-label="Model used for map colour and alarms"></select>
+      <span class="ctl-label">Map shows</span>
+      <div class="seg" id="mode-seg">
+        <button data-mode="forecast" aria-pressed="true">Forecast z</button>
+        <button data-mode="actual" aria-pressed="false">Actual z</button>
+      </div>
+      <a class="navlink" href="/closures">Closure Impact Lab →</a>
+    </div>
+  </header>
+
+  <main class="map-pane">
+    <div class="hour-head">
+      <div class="hour-big" id="hour-label">—<small>selected hour</small></div>
+      <div class="kpis" id="hour-kpis"></div>
+      <div class="legend">
+        <div class="ramp"><span>drop</span><span class="bar"></span><span>surge</span><span class="mono">z −4…+4</span></div>
+        <div><span class="ring-key"></span>alarm raised by the selected model (top 2% of station-hours)</div>
+      </div>
+    </div>
+    <div class="map-stage" id="map-stage">
+      <svg id="map" role="img" aria-label="Berlin U-Bahn stations coloured by anomaly score"></svg>
+      <div class="tip" id="map-tip"></div>
+    </div>
+    <div class="timeline">
+      <div class="tl-head">
+        <button class="btn" id="play-btn" aria-label="Play">▶ Play</button>
+        <button class="btn" id="prev-btn" aria-label="Previous hour">◀</button>
+        <button class="btn" id="next-btn" aria-label="Next hour">▶</button>
+        <span><span class="sw" style="background:var(--m-tabpfn)" id="tl-model-sw"></span><span id="tl-model-name">alarms</span> per hour</span>
+        <span><span class="sw" style="background:var(--ink)"></span>actual surges (z ≥ 2) per hour</span>
+        <span style="margin-left:auto" class="mono" id="tl-range"></span>
+      </div>
+      <svg class="tl-svg" id="timeline" role="img" aria-label="Alarms and actual surges per hour"></svg>
+    </div>
+  </main>
+
+  <section class="detail" id="detail">
+    <div id="scen-card-slot"></div>
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+      <h3 id="st-title">Select a station or a scenario</h3>
+      <span class="sub" id="st-sub"></span>
+    </div>
+    <div class="charts">
+      <div class="chart-box"><h4>Flow vs normal</h4><svg id="chart-flow"></svg><div class="chart-legend" id="lg-flow"></div><div class="tip" id="tip-flow"></div></div>
+      <div class="chart-box"><h4>Anomaly z — actual vs forecast</h4><svg id="chart-z"></svg><div class="chart-legend" id="lg-z"></div><div class="tip" id="tip-z"></div></div>
+    </div>
+  </section>
+
+  <aside class="rail">
+    <div class="sec">
+      <div class="sec-h"><h2>Model scoreboard</h2><span class="hint" id="score-hint"></span></div>
+      <div class="score-wrap"><table class="score" id="score"></table></div>
+      <div class="note" id="score-note"></div>
+    </div>
+    <div class="sec">
+      <div class="sec-h"><h2>Scenarios</h2><span class="hint">sorted by size of the actual anomaly</span></div>
+      <div class="chips" id="kind-chips" style="margin-bottom:7px"></div>
+      <div class="scen-list" id="scen-list"></div>
+    </div>
+    <div class="sec">
+      <div class="sec-h"><h2>Alarm feed · this hour</h2><span class="hint" id="feed-hint"></span></div>
+      <div class="feed" id="feed"></div>
+    </div>
+    <div class="sec">
+      <details class="method"><summary>How this works</summary>
+        <p>Hourly flow per station is compared with its <b>normal</b>: the median of log(1+flow) for that station, day type
+        (weekday / Saturday / Sunday) and hour over the training weeks. The residual divided by that station-hour's robust spread
+        (MAD) is the anomaly score <b>z</b>; <b>surge</b> = z ≥ 2. Models forecast z and the surge probability from
+        information known a day ahead: event calendar (venue mapped to the nearest station), planned closures, weather
+        forecast and station descriptors. An <b>alarm</b> is a station-hour in a model's top 2% of surge scores — the
+        operator's attention budget.</p>
+        <p>Windows: <b>Alstom hold-out</b> = the provided <code>*_rest</code> files (Sep 22–30, InnoTrans week);
+        <b>Backtest</b> = Sep 1–21 trained on data before Sep 1. Data is Alstom-simulated; many |z| ≥ 2 hours are noise
+        with no driver, which caps precision for every model. Engine: <code>tabpfn_lab/anomaly.py</code>, notebook
+        <code>notebooks/04_anomaly_early_warning.py</code>.</p>
+      </details>
+    </div>
+  </aside>
+</div>
+
+<script>
+const SVGNS = "http://www.w3.org/2000/svg";
+const MODEL_ORDER = ["tabpfn","xgb_full","xgb_small","xgb_profile","profile"];
+const MODEL_SHORT = {tabpfn:"TabPFN-3.5", xgb_full:"XGBoost full", xgb_small:"XGBoost 10k", xgb_profile:"XGBoost profile", profile:"Profile baseline"};
+const KIND_LABEL = {event:"Event", closure:"Closure", rain:"Rain"};
+const S = {network:null, summary:null, fold:"holdout", model:"tabpfn", mode:"forecast", hours:[], hourIdx:0,
+           timeline:null, hourCache:new Map(), hourData:null, station:null, stationSeries:null, scenario:null,
+           live:null, kind:"all", playing:null};
+
+const $ = id => document.getElementById(id);
+const el = (tag, attrs={}, parent) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtInt = n => n == null ? "—" : Math.round(n).toLocaleString("en-US");
+const fmtZ = z => (z >= 0 ? "+" : "−") + Math.abs(z).toFixed(1);
+const short = n => (n || "").replace(" (Berlin)", "");
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const mvar = k => `var(--m-${k})`;
+const D = s => new Date(s);
+const fmtHour = d => d.toLocaleString("en-GB", {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
+const fmtHM = d => d.toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"});
+const fmtDay = d => d.toLocaleDateString("en-GB", {weekday:"short", day:"2-digit"});
+async function getJSON(url, opts){ const r = await fetch(url, opts); const j = await r.json(); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; }
+
+/* ---------- colour: diverging z ---------- */
+function hexToRgb(h){ h = h.replace("#",""); if (h.length===3) h=[...h].map(c=>c+c).join(""); return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)); }
+function mix(a,b,t){ const A=hexToRgb(a),B=hexToRgb(b); return `rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(",")})`; }
+function zColor(z){ const t = Math.max(-1, Math.min(1, z/4)); return t >= 0 ? mix(css("--z-mid"), css("--z-pos"), t) : mix(css("--z-mid"), css("--z-neg"), -t); }
+
+/* ---------- boot ---------- */
+async function boot(){
+  try {
+    [S.network, S.summary] = await Promise.all([getJSON("/api/warning/network"), getJSON("/api/warning/summary")]);
+  } catch (e) {
+    $("app").innerHTML = `<div class="err"><b>Early-Warning Desk can't start.</b><br>${esc(e.message)}<br><br>
+      Run <code>make anomaly</code> (live TabPFN-3.5, ~4 min) or <code>make anomaly-offline</code> (XGBoost only), then reload.
+      The <a href="/closures">Closure Impact Lab</a> works independently.</div>`;
+    return;
+  }
+  const availModels = MODEL_ORDER.filter(k => k in S.summary.models);
+  if (!availModels.includes(S.model)) S.model = availModels[0];
+  $("model-sel").innerHTML = availModels.map(k => `<option value="${k}" ${k===S.model?"selected":""}>${esc(S.summary.models[k])}</option>`).join("");
+  $("model-sel").onchange = e => { S.model = e.target.value; refreshAll(); };
+  $("fold-seg").innerHTML = Object.entries(S.summary.folds).sort(([a],[b]) => a==="holdout" ? -1 : b==="holdout" ? 1 : 0)
+    .map(([k, f]) => `<button data-fold="${k}" aria-pressed="${k===S.fold}" title="${esc(f.label)}">${k==="holdout" ? "Hold-out · InnoTrans week" : "Backtest · Sep 1–21"}</button>`).join("");
+  $("fold-seg").onclick = e => { const b = e.target.closest("button"); if (b) setFold(b.dataset.fold); };
+  $("mode-seg").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.mode = b.dataset.mode;
+    [...$("mode-seg").children].forEach(x => x.setAttribute("aria-pressed", x === b)); paintMap(); };
+  $("kind-chips").innerHTML = ["all","event","closure","rain"].map(k => `<button class="chipbtn" data-kind="${k}" aria-pressed="${k===S.kind}">${k==="all"?"All":`<span class="dkind" style="background:var(--d-${k})"></span>${KIND_LABEL[k]}`}</button>`).join("");
+  $("kind-chips").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.kind = b.dataset.kind;
+    [...$("kind-chips").children].forEach(x => x.setAttribute("aria-pressed", x === b)); renderScenarios(); };
+  $("play-btn").onclick = togglePlay;
+  $("prev-btn").onclick = () => setHour(S.hourIdx - 1);
+  $("next-btn").onclick = () => setHour(S.hourIdx + 1);
+  document.addEventListener("keydown", e => { if (e.target.closest("input,select")) return;
+    if (e.key === "ArrowRight") setHour(S.hourIdx + 1); if (e.key === "ArrowLeft") setHour(S.hourIdx - 1); });
+  buildMap();
+  new ResizeObserver(() => { drawTimeline(); drawStationCharts(); }).observe($("detail"));
+  await setFold("holdout", true);
+  const first = rankedScenarios().find(s => s.kind === "event" && s.peak.z > 0) || rankedScenarios()[0];
+  if (first) openScenario(first.id);
+}
+
+function rankedScenarios(){
+  return S.summary.scenarios.filter(s => s.fold === S.fold).sort((a,b) => Math.abs(b.peak.z) - Math.abs(a.peak.z));
+}
+
+async function setFold(fold, initial){
+  S.fold = fold; S.live = null;
+  [...$("fold-seg").children].forEach(x => x.setAttribute("aria-pressed", x.dataset.fold === fold));
+  S.hours = S.summary.folds[fold].hours;
+  S.timeline = await getJSON(`/api/warning/timeline?fold=${fold}`);
+  $("tl-range").textContent = `${fmtHour(D(S.hours[0]))} → ${fmtHour(D(S.hours[S.hours.length-1]))}`;
+  renderScore(); renderScenarios();
+  if (!initial) { S.scenario = null; $("scen-card-slot").innerHTML = ""; }
+  const peakIdx = S.timeline.surges.indexOf(Math.max(...S.timeline.surges));
+  await setHour(initial ? 0 : peakIdx);
+  if (S.station) await loadStation(S.station);
+}
+
+function refreshAll(){
+  const sw = $("tl-model-sw"); sw.style.background = mvar(S.model); $("tl-model-name").textContent = MODEL_SHORT[S.model] + " alarms";
+  renderScore(); drawTimeline(); paintMap(); renderFeed(); drawStationCharts(); renderScenarioCard();
+}
+
+/* ---------- scoreboard ---------- */
+function renderScore(){
+  const f = S.summary.metrics.folds[S.fold];
+  const pooled = S.summary.metrics.pooled;
+  const rows = MODEL_ORDER.map(k => Object.entries(f.models).find(([,v]) => v.key === k)).filter(Boolean);
+  const maxPR = Math.max(...rows.map(([,v]) => v.pr_auc));
+  const pct = v => v == null ? "—" : Math.round(v*100) + "%";
+  $("score-hint").textContent = `${fmtInt(f.n_test_rows)} station-hours · surge rate ${(f.test_surge_rate*100).toFixed(1)}%`;
+  $("score").innerHTML = `<thead><tr><th>Model</th><th title="Precision–recall AUC for surge hours">PR-AUC</th><th title="Event-driven surges caught inside the 2% alarm budget">Events</th><th title="Closed-station collapses forecast (z ≤ −2)">Closures</th><th title="Training rows used">Rows</th><th title="Prediction time for the whole window">Score&nbsp;s</th></tr></thead><tbody>` +
+    rows.map(([name, v]) => `<tr data-k="${v.key}" class="${v.key===S.model?"sel":""}">
+      <td><span class="sw" style="background:${mvar(v.key)}"></span>${esc(name)}</td>
+      <td><span class="mbar" style="width:${Math.round(48*v.pr_auc/maxPR)}px;background:${mvar(v.key)}"></span>${v.pr_auc.toFixed(3)}</td>
+      <td>${pct(v.recall_event)}</td><td>${pct(v.closure_drop_recall)}</td>
+      <td>${v.n_train >= 1000 ? Math.round(v.n_train/1000) + "k" : v.n_train}</td>
+      <td>${v.predict_s < 0.1 ? "<0.1" : v.predict_s.toFixed(1)}</td></tr>`).join("") + "</tbody>";
+  $("score").onclick = e => { const tr = e.target.closest("tr[data-k]"); if (tr) { S.model = tr.dataset.k; $("model-sel").value = S.model; refreshAll(); } };
+  const tp = pooled.models["TabPFN-3.5 (10k context)"], xs = pooled.models["XGBoost (10k sample)"], xf = pooled.models["XGBoost (full history)"], pb = pooled.models["Profile baseline"];
+  const tf = f.models["TabPFN-3.5 (10k context)"], curve = f.xgboost_learning_curve || [];
+  const match = tf && curve.find(c => c.pr_auc >= tf.pr_auc);
+  $("score-note").innerHTML = tp ? `Both windows pooled: with the <b>same 10k rows</b>, TabPFN-3.5 reaches PR-AUC <b>${tp.pr_auc.toFixed(3)}</b> vs XGBoost <b>${xs.pr_auc.toFixed(3)}</b>
+    and catches <b>${pct(tp.recall_event)}</b> vs <b>${pct(xs.recall_event)}</b> of event surges.
+    ${match ? `In this window XGBoost needs <b>~${fmtInt(match.n_train)}</b> rows to match it.` : ""}
+    With the full history (28–35× more rows) XGBoost leads (${xf.pr_auc.toFixed(3)}, ${pct(xf.recall_event)}):
+    TabPFN-3.5 is the tool for short-history cases, a trained GBM for mature ones. The clock-only baseline catches ${pct(pb.recall_event)} of event surges and no closures.`
+    : `TabPFN-3.5 results not cached — run <code>make anomaly</code> for the live comparison.`;
+}
+
+/* ---------- scenarios list ---------- */
+function renderScenarios(){
+  const list = rankedScenarios().filter(s => S.kind === "all" || s.kind === S.kind);
+  $("scen-list").innerHTML = list.length ? list.map(s => {
+    const isDrop = s.peak.z < 0, a = (isDrop ? s.drops : s.alarms) || {};
+    const v = s.station ? ["tabpfn","xgb_full","xgb_small","profile"].filter(k => k in a)
+      .map(k => `<span title="${esc(MODEL_SHORT[k])}">${esc(MODEL_SHORT[k].replace("XGBoost","XGB"))} <b style="color:${a[k] ? "var(--good)" : "var(--fg-faint)"}">${a[k] ? "✓" : "–"}</b></span>`).join("") : `<span>network-wide · median z</span>`;
+    return `<div class="scen ${S.scenario && S.scenario.id===s.id ? "active" : ""}" data-id="${esc(s.id)}" role="button" tabindex="0">
+      <div class="t"><span class="dkind" style="background:var(--d-${s.kind})"></span>${esc(s.title)}</div>
+      <span class="zbadge ${s.peak.z >= 0 ? "pos" : "neg"}">z ${fmtZ(s.peak.z)}</span>
+      <div class="m">${esc(s.station_short)} · ${fmtHour(D(s.peak.ts))}</div>
+      <div class="mini-v">${Math.abs(s.peak.z) >= 2 || !s.station ? (isDrop && s.station ? `<span>drop forecast:</span>` : "") + v : `<span>small anomaly — nothing to flag</span>`}</div></div>`;
+  }).join("") : `<div class="empty">No ${KIND_LABEL[S.kind] || ""} scenarios in this window.</div>`;
+  $("scen-list").onclick = e => { const c = e.target.closest(".scen"); if (c) openScenario(c.dataset.id); };
+  $("scen-list").onkeydown = e => { if (e.key === "Enter") { const c = e.target.closest(".scen"); if (c) openScenario(c.dataset.id); } };
+}
+
+async function openScenario(id){
+  stopPlay();
+  const meta = S.summary.scenarios.find(s => s.id === id);
+  if (meta.fold !== S.fold) await setFold(meta.fold);
+  S.scenario = await getJSON(`/api/warning/scenario?id=${encodeURIComponent(id)}`);
+  S.live = null;
+  renderScenarios();
+  const idx = S.hours.indexOf(S.scenario.peak.ts);
+  await setHour(idx >= 0 ? idx : S.hourIdx, true);
+  if (S.scenario.station) await loadStation(S.scenario.station, true);
+  else { S.station = null; S.stationSeries = S.scenario.series; drawStationCharts(); }
+  renderScenarioCard();
+}
+
+function scenarioRecommendation(sc){
+  const ser = sc.series, peak = ser.reduce((a,b) => Math.abs(b.z) > Math.abs(a.z) ? b : a, ser[0]);
+  const t = D(peak.ts), k = S.model;
+  const fc = peak[`pax_${k}`], normal = peak.normal_passengers, actual = peak.passengers;
+  const st = sc.station_short;
+  if (sc.kind === "rain") {
+    return `Network-wide shift: median station z <b>${fmtZ(peak.z)}</b> at ${fmtHM(t)}. Rain lifts demand modestly across the network —
+      plan for fuller trains on trunk lines rather than a single-station response.`;
+  }
+  const alarmAt = sc.alarms && sc.alarms[k] ? D(sc.alarms[k]) : null;
+  const vsNormal = normal >= 50 ? `${fc >= normal ? "+" : "−"}${Math.abs(Math.round(100*(fc/normal - 1)))}% vs a normal ${fmtInt(normal)}`
+                                : `vs a normal of only ${fmtInt(normal)}`;
+  if (sc.kind === "closure" || peak.z < 0) {
+    const nb = (sc.extra_stations || []).slice(0,4).map(short).join(", ");
+    return `${MODEL_SHORT[k]} expects <b>${fmtInt(fc)}</b> riders/h at ${esc(st)} around ${fmtHM(t)} (normal ${fmtInt(normal)}, actual ${fmtInt(actual)}).
+      ${sc.drops && sc.drops[k] ? `Collapse forecast from ${fmtHM(D(sc.drops[k]))}. ` : ""}<b>Action:</b> station is shut — announce alternatives and replacement buses${nb ? `; also affected: ${esc(nb)}` : ""}.`;
+  }
+  return `${MODEL_SHORT[k]} expects <b>${fmtInt(fc)}</b> riders/h at ${esc(st)} around ${fmtHM(t)} — ${vsNormal} (actual: <b>${fmtInt(actual)}</b>).
+    ${alarmAt ? `<b>Alarm raised for ${fmtHM(alarmAt)}</b> a day ahead → add short-turn trains and platform staff from ${fmtHM(new Date(alarmAt - 3600e3))}.`
+              : `<b>No alarm</b> from this model — the surge would have been handled reactively.`}`;
+}
+
+function renderScenarioCard(){
+  const sc = S.scenario, slot = $("scen-card-slot");
+  if (!sc) { slot.innerHTML = ""; return; }
+  const isDrop = sc.peak.z < 0, a = (isDrop ? sc.drops : sc.alarms) || {};
+  const verdicts = sc.station ? MODEL_ORDER.filter(k => k in a).map(k =>
+    `<span class="verdict ${a[k] ? "hit" : "miss"}"><span class="sw" style="background:${mvar(k)}"></span>${esc(MODEL_SHORT[k])}
+     <span class="ic">${a[k] ? "✓ " + fmtHM(D(a[k])) : isDrop ? "– no drop forecast" : "– no alarm"}</span></span>`).join("") : "";
+  slot.innerHTML = `<div class="scen-card ${sc.peak.z < 0 ? "drop" : ""}">
+    <div class="kind"><span class="dkind" style="background:var(--d-${sc.kind})"></span>${KIND_LABEL[sc.kind]} scenario · ${esc(S.summary.folds[sc.fold].label)}</div>
+    <div class="title">${esc(sc.title)}</div>
+    <div class="cause">${esc(sc.cause)}</div>
+    <div class="reco">${scenarioRecommendation(sc)}</div>
+    ${verdicts ? `<div class="verdicts" aria-label="Which models flagged it"><span class="sub" style="align-self:center">${isDrop ? "Forecast z ≤ −2 (collapse) from:" : "Surge alarm (top 2%) from:"}</span>${verdicts}</div>` : ""}
+    <div style="margin-top:9px;display:flex;align-items:center;flex-wrap:wrap">
+      <button class="btn" id="live-btn">⚡ Re-score live with TabPFN-3.5</button>
+      <span class="live-note" id="live-note">${S.live ? liveNote(S.live) : "real API call · first call per window fits the 10k context (~5 s)"}</span>
+    </div></div>`;
+  $("live-btn").onclick = runLive;
+}
+function liveNote(l){ return `live: ${l.n_rows} rows scored in ${l.total_s.toFixed(1)} s${l.fitted_now ? ` (incl. fit ${l.fit_s.toFixed(1)} s)` : ""} — dashed line in the z chart`; }
+
+async function runLive(){
+  const btn = $("live-btn"), note = $("live-note");
+  btn.disabled = true; note.textContent = "calling TabPFN-3.5…";
+  try {
+    S.live = await getJSON("/api/warning/live", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({scenario_id:S.scenario.id})});
+    note.textContent = liveNote(S.live); drawStationCharts();
+  } catch (e) { note.textContent = "live call failed: " + e.message; }
+  btn.disabled = false;
+}
+
+/* ---------- hour selection ---------- */
+async function setHour(i, keepScenario){
+  i = Math.max(0, Math.min(S.hours.length - 1, i));
+  S.hourIdx = i;
+  const ts = S.hours[i], key = S.fold + "|" + ts;
+  if (!S.hourCache.has(key)) S.hourCache.set(key, getJSON(`/api/warning/hour?fold=${S.fold}&ts=${encodeURIComponent(ts)}`));
+  S.hourData = await S.hourCache.get(key);
+  if (S.hours[S.hourIdx] !== ts) return;  // superseded by a newer call
+  const d = D(ts), tl = S.timeline;
+  $("hour-label").innerHTML = `${fmtHour(d)}<small>selected hour · ← → keys step</small>`;
+  const rows = S.hourData.stations;
+  const alarms = rows.filter(r => r[`alarm_${S.model}`]).length;
+  $("hour-kpis").innerHTML = [
+    ["Alarms · " + MODEL_SHORT[S.model], alarms],
+    ["Actual surges", tl.surges[i]],
+    ["Actual drops", tl.drops[i]],
+    ["Median z", fmtZ(tl.median_z[i])],
+    ["Rain", (tl.prcp[i] ?? 0).toFixed(1) + " mm"],
+    ["Temp", (tl.temp[i] ?? 0).toFixed(0) + " °C"],
+  ].map(([l,v]) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${v}</div></div>`).join("");
+  paintMap(); renderFeed(); drawTimeline(); drawStationCharts();
+}
+
+function togglePlay(){ S.playing ? stopPlay() : startPlay(); }
+function startPlay(){ $("play-btn").textContent = "❚❚ Pause"; S.playing = setInterval(() => { if (S.hourIdx >= S.hours.length - 1) return stopPlay(); setHour(S.hourIdx + 1); }, 650); }
+function stopPlay(){ clearInterval(S.playing); S.playing = null; $("play-btn").textContent = "▶ Play"; }
+
+/* ---------- map ---------- */
+let nodes = new Map(), proj;
+function buildMap(){
+  const svg = $("map"), st = S.network.stations;
+  const lons = st.map(s => s.lon), lats = st.map(s => s.lat);
+  const lonMin = Math.min(...lons), lonMax = Math.max(...lons), latMin = Math.min(...lats), latMax = Math.max(...lats);
+  const k = Math.cos((latMin + latMax) / 2 * Math.PI / 180);
+  const W = 1000, PAD = 30, spanX = (lonMax - lonMin) * k, spanY = latMax - latMin;
+  const H = Math.round((W - 2*PAD) * spanY / spanX + 2*PAD);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  proj = (lon, lat) => [PAD + (lon - lonMin) * k / spanX * (W - 2*PAD), PAD + (latMax - lat) / spanY * (H - 2*PAD)];
+  const byName = new Map(st.map(s => [s.name, s]));
+  const gE = el("g", {}, svg), gN = el("g", {}, svg);
+  for (const [a, b] of S.network.edges) {
+    const A = byName.get(a), B = byName.get(b); if (!A || !B) continue;
+    const line = A.lines.find(l => B.lines.includes(l));
+    const [x1, y1] = proj(A.lon, A.lat), [x2, y2] = proj(B.lon, B.lat);
+    el("line", {x1, y1, x2, y2, stroke: S.network.line_colors[line] || "#6b7686", "stroke-width": 3, "stroke-linecap": "round", opacity: .35}, gE);
+  }
+  for (const s of st) {
+    const [x, y] = proj(s.lon, s.lat);
+    const g = el("g", {style: "cursor:pointer", tabindex: 0, role: "button", "aria-label": s.short}, gN);
+    const r = s.lines.length > 1 ? 8 : 6;
+    el("circle", {cx: x, cy: y, r: r + 7, fill: "transparent"}, g);  // hit target
+    const ring = el("circle", {cx: x, cy: y, r: r + 4.5, fill: "none", stroke: "var(--danger)", "stroke-width": 2.5, opacity: 0}, g);
+    const sel = el("circle", {cx: x, cy: y, r: r + 8, fill: "none", stroke: "var(--ink)", "stroke-width": 2, opacity: 0}, g);
+    const c = el("circle", {cx: x, cy: y, r, fill: "var(--z-mid)", stroke: "var(--fg-faint)", "stroke-width": 1.2}, g);
+    const label = el("text", {x: x + r + 5, y: y + 4, "font-size": 13, "font-family": "IBM Plex Sans", fill: "var(--fg)", opacity: 0, "paint-order": "stroke", stroke: "var(--bg)", "stroke-width": 3}, g);
+    label.textContent = s.short;
+    g.addEventListener("click", () => { S.scenario = null; $("scen-card-slot").innerHTML = ""; renderScenarios(); loadStation(s.name); });
+    g.addEventListener("keydown", e => { if (e.key === "Enter") loadStation(s.name); });
+    g.addEventListener("mousemove", e => showMapTip(e, s.name));
+    g.addEventListener("mouseleave", () => $("map-tip").style.display = "none");
+    nodes.set(s.name, {c, ring, sel, label, x, y});
+  }
+}
+
+function paintMap(){
+  if (!S.hourData) return;
+  const rows = new Map(S.hourData.stations.map(r => [r.station, r]));
+  const top = [...rows.values()].filter(r => r[`alarm_${S.model}`])
+    .sort((a, b) => b[`p_${S.model}`] - a[`p_${S.model}`]).slice(0, 6).map(r => r.station);
+  for (const [name, n] of nodes) {
+    const r = rows.get(name);
+    const z = r ? (S.mode === "actual" ? r.z : r[`z_hat_${S.model}`]) : 0;
+    n.c.setAttribute("fill", r ? zColor(z) : "var(--z-mid)");
+    const alarm = r && r[`alarm_${S.model}`];
+    n.ring.setAttribute("opacity", alarm ? 1 : 0);
+    n.sel.setAttribute("opacity", S.station === name ? 1 : 0);
+    n.label.setAttribute("opacity", (S.station === name || top.includes(name)) ? 1 : 0);
+  }
+}
+
+function showMapTip(e, name){
+  const r = S.hourData && S.hourData.stations.find(x => x.station === name); if (!r) return;
+  const tip = $("map-tip"), stage = $("map-stage").getBoundingClientRect();
+  const drv = r.driver !== "none" ? `<div class="row"><span>Driver</span><span><span class="dkind" style="background:var(--d-${r.driver})"></span>${r.driver}</span></div>` : "";
+  tip.innerHTML = `<b>${esc(short(name))}</b>
+    <div class="row"><span>Actual / normal</span><span>${fmtInt(r.actual)} / ${fmtInt(r.normal)}</span></div>
+    <div class="row"><span>Actual z</span><span>${fmtZ(r.z)}</span></div>
+    <div class="row"><span>Forecast z · ${esc(MODEL_SHORT[S.model])}</span><span>${fmtZ(r[`z_hat_${S.model}`])}</span></div>
+    <div class="row"><span>Surge prob.</span><span>${(r[`p_${S.model}`]*100).toFixed(1)}%${r[`alarm_${S.model}`] ? " · ALARM" : ""}</span></div>${drv}
+    ${r.event_att ? `<div class="row"><span>Event crowd</span><span>${fmtInt(r.event_att)}</span></div>` : ""}
+    ${r.closed ? `<div class="row"><span>Status</span><span>station closed</span></div>` : ""}`;
+  tip.style.display = "block";
+  let x = e.clientX - stage.left + 14, y = e.clientY - stage.top + 14;
+  if (x + 230 > stage.width) x -= 250; if (y + 170 > stage.height) y -= 180;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+
+/* ---------- alarm feed ---------- */
+function renderFeed(){
+  if (!S.hourData) return;
+  const rows = S.hourData.stations.filter(r => r[`alarm_${S.model}`]).sort((a,b) => b[`p_${S.model}`] - a[`p_${S.model}`]);
+  $("feed-hint").textContent = `${MODEL_SHORT[S.model]} · ${rows.length} alarm${rows.length===1?"":"s"}`;
+  $("feed").innerHTML = rows.length ? rows.slice(0, 12).map(r => {
+    const hit = r.z >= 2;
+    return `<div class="feed-row" data-st="${esc(r.station)}" role="button" tabindex="0">
+      <span><span class="dkind" style="background:var(--d-${r.driver})"></span>${esc(short(r.station))} <span style="color:var(--fg-faint);font-size:11px">${r.driver !== "none" ? r.driver : ""}</span></span>
+      <span class="p">${(r[`p_${S.model}`]*100).toFixed(0)}%</span>
+      <span class="o" style="color:${hit ? "var(--good)" : "var(--fg-faint)"}" title="actual outcome">${hit ? "✓ z " + fmtZ(r.z) : "z " + fmtZ(r.z)}</span></div>`;
+  }).join("") : `<div class="empty" style="padding:10px">No alarms this hour. Scrub the timeline — alarms cluster around event egress (21:00–00:00) and closures.</div>`;
+  $("feed").onclick = e => { const f = e.target.closest(".feed-row"); if (f) { S.scenario = null; $("scen-card-slot").innerHTML = ""; renderScenarios(); loadStation(f.dataset.st); } };
+}
+
+/* ---------- timeline ---------- */
+function drawTimeline(){
+  const svg = $("timeline"); if (!S.timeline) return;
+  const W = svg.clientWidth || 800, H = 84, padL = 30, padR = 8, padT = 6, padB = 18;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.innerHTML = "";
+  const n = S.hours.length, al = S.timeline[`alarms_${S.model}`] || [], su = S.timeline.surges;
+  const ymax = Math.max(4, ...al, ...su);
+  const bw = (W - padL - padR) / n, X = i => padL + i * bw, Y = v => padT + (H - padT - padB) * (1 - v / ymax);
+  for (const v of [0, Math.round(ymax/2), ymax]) {
+    el("line", {x1: padL, x2: W - padR, y1: Y(v), y2: Y(v), stroke: "var(--grid)"}, svg);
+    el("text", {x: padL - 4, y: Y(v) + 3, "text-anchor": "end", "font-size": 9, fill: "var(--fg-faint)", "font-family": "IBM Plex Mono"}, svg).textContent = v;
+  }
+  al.forEach((v, i) => { if (v > 0) el("rect", {x: X(i) + .5, y: Y(v), width: Math.max(1, bw - 1), height: Y(0) - Y(v), fill: mvar(S.model), rx: Math.min(2, bw/3)}, svg); });
+  let d = ""; su.forEach((v, i) => d += (i ? "L" : "M") + (X(i) + bw/2).toFixed(1) + "," + Y(v).toFixed(1));
+  el("path", {d, fill: "none", stroke: "var(--ink)", "stroke-width": 1.5, opacity: .85}, svg);
+  let lastDay = "";
+  S.hours.forEach((h, i) => { const dd = D(h); const day = dd.toDateString();
+    if (day !== lastDay) { lastDay = day; el("line", {x1: X(i), x2: X(i), y1: padT, y2: H - padB + 4, stroke: "var(--border)"}, svg);
+      el("text", {x: X(i) + 3, y: H - 4, "font-size": 10, fill: "var(--fg-muted)", "font-family": "IBM Plex Sans"}, svg).textContent = fmtDay(dd); } });
+  if (S.scenario) {
+    const a = S.hours.findIndex(h => D(h) >= D(S.scenario.start)), b = S.hours.findLastIndex(h => D(h) <= D(S.scenario.end));
+    if (a >= 0 && b >= a) el("rect", {x: X(a), y: padT, width: X(b + 1) - X(a), height: H - padT - padB, fill: "var(--accent)", opacity: .12}, svg);
+  }
+  const cx = X(S.hourIdx) + bw/2;
+  el("line", {x1: cx, x2: cx, y1: 0, y2: H - padB + 2, stroke: "var(--accent)", "stroke-width": 2}, svg);
+  el("circle", {cx, cy: 4, r: 4, fill: "var(--accent)"}, svg);
+  const pick = e => { const r = svg.getBoundingClientRect(); setHour(Math.floor((e.clientX - r.left - padL) / bw)); };
+  svg.onpointerdown = e => { stopPlay(); pick(e); svg.setPointerCapture(e.pointerId); svg.onpointermove = pick; };
+  svg.onpointerup = () => svg.onpointermove = null;
+}
+
+/* ---------- station detail ---------- */
+async function loadStation(name, fromScenario){
+  stopPlay();
+  S.station = name;
+  if (!fromScenario) { S.scenario = null; S.live = null; }
+  const j = await getJSON(`/api/warning/station?fold=${S.fold}&station=${encodeURIComponent(name)}`);
+  S.stationSeries = j.series;
+  paintMap(); drawStationCharts();
+}
+
+function chartWindow(){
+  const ser = S.stationSeries || [];
+  if (S.scenario) return ser.filter(r => D(r.ts) >= D(S.scenario.start) && D(r.ts) <= D(S.scenario.end));
+  const t = D(S.hours[S.hourIdx]);
+  return ser.filter(r => Math.abs(D(r.ts) - t) <= 30 * 3600e3);
+}
+
+function drawStationCharts(){
+  const rows = chartWindow();
+  if (!rows.length) { $("chart-flow").innerHTML = ""; $("chart-z").innerHTML = ""; return; }
+  const name = S.scenario ? S.scenario.station_short : short(S.station);
+  $("st-title").textContent = name;
+  $("st-sub").textContent = S.scenario ? `${fmtHour(D(rows[0].ts))} → ${fmtHour(D(rows[rows.length-1].ts))}` : `±30 h around the selected hour · click a station or scenario`;
+  const xs = rows.map(r => D(r.ts)), tsKeys = rows.map(r => r.ts);
+  const cur = D(S.hours[S.hourIdx]);
+  const k = S.model;
+  const flowSeries = [
+    {name: "normal", values: rows.map(r => r.normal_passengers), color: "var(--fg-muted)", dash: "4 3"},
+    {name: "actual", values: rows.map(r => r.passengers), color: "var(--ink)", width: 2.2},
+  ];
+  if (rows[0][`pax_${k}`] !== undefined && k !== "profile") flowSeries.push({name: `${MODEL_SHORT[k]} forecast`, values: rows.map(r => r[`pax_${k}`]), color: mvar(k)});
+  lineChart($("chart-flow"), $("tip-flow"), $("lg-flow"), {xs, tsKeys, series: flowSeries, cur, yFmt: fmtInt, yMin: 0});
+
+  const zModels = ["tabpfn", "xgb_full", "xgb_small"].filter(m => rows[0][`z_hat_${m}`] !== undefined);
+  const zSeries = zModels.map(m => ({name: MODEL_SHORT[m], values: rows.map(r => r[`z_hat_${m}`]), color: mvar(m), width: m === k ? 2.4 : 1.6, opacity: m === k ? 1 : .55}));
+  if (S.live && S.scenario && S.live.scenario_id === S.scenario.id) {
+    const lv = new Map(S.live.series.map(p => [p.ts, p.z_hat]));
+    zSeries.push({name: "TabPFN-3.5 live", values: rows.map(r => lv.get(r.ts) ?? null), color: "var(--m-tabpfn)", dash: "5 3", width: 2});
+  }
+  const alarms = rows.map(r => !!r[`alarm_${k}`]);
+  lineChart($("chart-z"), $("tip-z"), $("lg-z"), {xs, tsKeys, series: zSeries, bars: rows.map(r => r.z), cur, yFmt: v => fmtZ(v), band: [-2, 2], alarms, alarmColor: mvar(k), alarmLabel: `${MODEL_SHORT[k]} alarm`});
+}
+
+/* ---------- generic line chart with crosshair tooltip ---------- */
+function lineChart(svg, tip, legend, o){
+  const W = svg.clientWidth || 500, H = 210, pl = 46, pr = 10, pt = 12, pb = 24;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.innerHTML = "";
+  const n = o.xs.length, all = [...o.series.flatMap(s => s.values), ...(o.bars || []), ...(o.band || [])].filter(v => v != null && isFinite(v));
+  let lo = o.yMin ?? Math.min(...all), hi = Math.max(...all); if (hi === lo) hi = lo + 1;
+  const padv = (hi - lo) * .08; if (o.yMin == null) lo -= padv; hi += padv;
+  const X = i => pl + (n === 1 ? 0 : i * (W - pl - pr) / (n - 1)), Y = v => pt + (H - pt - pb) * (1 - (v - lo) / (hi - lo));
+  if (o.band) el("rect", {x: pl, width: W - pl - pr, y: Y(o.band[1]), height: Y(o.band[0]) - Y(o.band[1]), fill: "var(--band)"}, svg);
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) { const v = lo + (hi - lo) * t / ticks;
+    el("line", {x1: pl, x2: W - pr, y1: Y(v), y2: Y(v), stroke: "var(--grid)"}, svg);
+    el("text", {x: pl - 6, y: Y(v) + 3, "text-anchor": "end", "font-size": 10, fill: "var(--fg-faint)", "font-family": "IBM Plex Mono"}, svg).textContent = o.yFmt(v); }
+  const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - pl) / 70))));
+  o.xs.forEach((x, i) => { if (i % step === 0) el("text", {x: X(i), y: H - 6, "text-anchor": "middle", "font-size": 10, fill: "var(--fg-muted)", "font-family": "IBM Plex Sans"}, svg)
+    .textContent = x.getHours() === 0 || i === 0 ? fmtDay(x) + " " + fmtHM(x) : fmtHM(x); });
+  if (o.bars) {
+    const bw = Math.max(2, (W - pl - pr) / n * .62), y0 = Y(Math.max(lo, 0));
+    o.bars.forEach((v, i) => { const y = Y(v); el("rect", {x: X(i) - bw/2, y: Math.min(y, y0), width: bw, height: Math.max(1, Math.abs(y0 - y)), rx: 2,
+      fill: v >= 0 ? "var(--z-pos)" : "var(--z-neg)", opacity: .45}, svg); });
+    el("line", {x1: pl, x2: W - pr, y1: Y(0), y2: Y(0), stroke: "var(--fg-faint)"}, svg);
+  }
+  for (const s of o.series) {
+    let d = "", pen = false;
+    s.values.forEach((v, i) => { if (v == null || !isFinite(v)) { pen = false; return; } d += (pen ? "L" : "M") + X(i).toFixed(1) + "," + Y(v).toFixed(1); pen = true; });
+    el("path", {d, fill: "none", stroke: s.color, "stroke-width": s.width || 1.8, "stroke-dasharray": s.dash || "", opacity: s.opacity ?? 1, "stroke-linejoin": "round"}, svg);
+  }
+  if (o.alarms) o.alarms.forEach((a, i) => { if (a) { const x = X(i), y = pt + 2;
+    el("path", {d: `M${x-6},${y} L${x+6},${y} L${x},${y+9} Z`, fill: o.alarmColor, stroke: "var(--bg-elev)", "stroke-width": 1.5}, svg); } });
+  const ci = o.xs.findIndex(x => +x === +o.cur);
+  if (ci >= 0) el("line", {x1: X(ci), x2: X(ci), y1: pt, y2: H - pb, stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "3 3"}, svg);
+  const cross = el("line", {y1: pt, y2: H - pb, stroke: "var(--fg-faint)", opacity: 0}, svg);
+  const hit = el("rect", {x: pl, y: pt, width: W - pl - pr, height: H - pt - pb, fill: "transparent", style: "cursor:pointer"}, svg);
+  let hover = -1;
+  hit.addEventListener("mousemove", e => {
+    const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) * W / r.width;
+    const i = Math.max(0, Math.min(n - 1, Math.round((mx - pl) / ((W - pl - pr) / Math.max(1, n - 1)))));
+    hover = i;
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("opacity", 1);
+    const lines = o.series.map(s => s.values[i] == null ? "" : `<div class="row"><span><span class="sw" style="background:${s.color}"></span>${esc(s.name)}</span><span>${o.yFmt(s.values[i])}</span></div>`).join("");
+    const bar = o.bars ? `<div class="row"><span>actual z</span><span>${fmtZ(o.bars[i])}</span></div>` : "";
+    const al = o.alarms && o.alarms[i] ? `<div class="row"><span>${esc(o.alarmLabel)}</span><span>▼ raised</span></div>` : "";
+    tip.innerHTML = `<b>${fmtHour(o.xs[i])}</b>${bar}${lines}${al}`;
+    tip.style.display = "block";
+    const box = svg.parentElement.getBoundingClientRect();
+    let left = e.clientX - box.left + 12; if (left + 210 > box.width) left -= 230;
+    tip.style.left = left + "px"; tip.style.top = (e.clientY - box.top + 10) + "px";
+  });
+  hit.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.setAttribute("opacity", 0); });
+  hit.addEventListener("click", () => { const h = hover >= 0 ? S.hours.indexOf(o.tsKeys[hover]) : -1; if (h >= 0) setHour(h); });
+  const items = o.series.map(s => `<span><span class="sw" style="background:${s.color}${s.dash ? ";opacity:.7" : ""}"></span>${esc(s.name)}</span>`);
+  if (o.bars) items.unshift(`<span><span class="sw" style="background:var(--z-pos);opacity:.6"></span>actual z (surge) / <span class="sw" style="background:var(--z-neg);opacity:.6"></span>(drop)</span>`);
+  if (o.band) items.push(`<span><span class="sw" style="background:var(--band)"></span>normal range |z| &lt; 2</span>`);
+  if (o.alarms && o.alarms.some(Boolean)) items.push(`<span style="color:var(--fg)">▼ ${esc(o.alarmLabel)}</span>`);
+  legend.innerHTML = items.join("");
+}
+
+boot();
+</script>
+</body>
+</html>
