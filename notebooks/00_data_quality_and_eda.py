@@ -44,7 +44,7 @@ def _():
     REPO_ROOT = Path(__file__).resolve().parents[1]
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    return (REPO_ROOT,)
+    return
 
 
 @app.cell
@@ -54,6 +54,7 @@ def _():
 
     _ = load_dotenv()
     folder = bl.discover_dataset_dir(BERLIN_DATA_DIR)
+    print(folder)
     return bl, folder
 
 

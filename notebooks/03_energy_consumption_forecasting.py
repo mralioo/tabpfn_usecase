@@ -96,7 +96,9 @@ def _(folder, load_energy, load_stations):
 
 @app.cell
 def _(energy_long, line_cols, mo):
-    mo.md(f"**Energy data**: {len(energy_long)} line-days across {len(line_cols)} lines ({', '.join(line_cols)}), {energy_long['date'].min()} → {energy_long['date'].max()}.")
+    mo.md(f"""
+    **Energy data**: {len(energy_long)} line-days across {len(line_cols)} lines ({', '.join(line_cols)}), {energy_long['date'].min()} → {energy_long['date'].max()}.
+    """)
     return
 
 
@@ -186,11 +188,11 @@ def _(
 
 @app.cell
 def _(after, before, mo, table):
-    mo.md(
-        f"""**Assembled table**: {before} rows → {after} after dropping rows with no ridership/weather
+    mo.md(f"""
+    **Assembled table**: {before} rows → {after} after dropping rows with no ridership/weather
         match ({before - after} dropped — edge days at the dataset boundary). Columns:
-        `{", ".join(table.columns)}`."""
-    )
+        `{", ".join(table.columns)}`.
+    """)
     return
 
 
@@ -265,11 +267,11 @@ def _(np, table):
 
 @app.cell
 def _(X_all, cutoff_date, mo, test_mask, train_mask):
-    mo.md(
-        f"""**Chronological split** at `{cutoff_date}`: {int(train_mask.sum())} train rows,
+    mo.md(f"""
+    **Chronological split** at `{cutoff_date}`: {int(train_mask.sum())} train rows,
         {int(test_mask.sum())} test rows. {len(X_all.columns)} features: `{list(X_all.columns)}`,
-        target `mwh`."""
-    )
+        target `mwh`.
+    """)
     return
 
 
@@ -348,11 +350,11 @@ def _(
     xgb_fit_s,
     xgb_predict_s,
 ):
-    mo.md(
-        f"""**XGBoost**: fit {xgb_fit_s * 1000:.1f}ms, predict {xgb_predict_s * 1000:.1f}ms.
+    mo.md(f"""
+    **XGBoost**: fit {xgb_fit_s * 1000:.1f}ms, predict {xgb_predict_s * 1000:.1f}ms.
         **TabPFN-3.5**: {"fit " + f"{tab_fit_s:.2f}s" + ", predict " + f"{tab_predict_s:.2f}s" if tab_error is None else "unavailable (" + tab_error + ")"} —
-        on {int(train_mask.sum())} training rows this is the entire dataset, not a sample."""
-    )
+        on {int(train_mask.sum())} training rows this is the entire dataset, not a sample.
+    """)
     return
 
 
@@ -433,6 +435,11 @@ def _(mo):
       closures (see `data/SOURCE.md`) — treat the ridership-energy relationship as
       plausible-by-construction, not a validated real physical model.
     """)
+    return
+
+
+@app.cell
+def _():
     return
 
 

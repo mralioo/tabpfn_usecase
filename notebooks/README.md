@@ -22,6 +22,7 @@ webapp uses, so the two are never comparing different models by accident).
 | `01_demand_forecasting_and_overcrowding.py` | Will this station be overcrowded? How many passengers are expected? | Benchmarks the exact use case `mcp_server/server.py` already serves — ROC/calibration/residuals the production tools don't show |
 | `02_closure_impact_and_network_resilience.py` | What happens if this station/line closes? | Same engine as `webapp/` (`tabpfn_lab/closure_impact.py`), run systematically across every real recorded closure instead of one at a time, plus pure graph-theory resilience (articulation points, betweenness) |
 | `03_energy_consumption_forecasting.py` | How much energy will this line draw? | **New** — `energy_consumption_*.csv` wasn't joined to anything else in this repo before this notebook |
+| `04_anomaly_early_warning.py` | When will a station run off its normal pattern (surge or collapse), and why? | **The refined use case.** Removes the daily/weekly oscillation (robust station × day type × hour profile, z-score), attributes anomalies to events/closures/weather, and benchmarks profile baseline vs XGBoost vs TabPFN-3.5 on two folds plus an XGBoost learning curve. Scenario replay and alarm feed match the webapp's Early-Warning Desk. Reads `results/anomaly/` (`make anomaly`) |
 
 First run of `01`–`03` is slow (feature-table build + model fits, no caching yet); after that,
 XGBoost is instant and only the live TabPFN-3.5 calls take real network time (seconds, not

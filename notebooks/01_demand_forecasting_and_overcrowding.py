@@ -64,7 +64,6 @@ def _():
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
 
-
     return
 
 
@@ -123,6 +122,12 @@ def _(chronological_split, ci, mo):
 
 
 @app.cell
+def _(table):
+    table
+    return
+
+
+@app.cell
 def _(mo):
     mo.md("""
     ## 2. Target distributions
@@ -135,14 +140,6 @@ def _(mo, px, table):
     _per_station = table.groupby("station_name")["overcrowded"].mean().sort_values()
     _fig = px.histogram(_per_station, nbins=30, title="Per-station overcrowding rate (should cluster near 10% by construction — P90 of its OWN history)")
     _fig.update_layout(height=320, margin=dict(t=40, b=20), showlegend=False, xaxis_title="P(overcrowded)")
-    mo.ui.plotly(_fig)
-    return
-
-
-@app.cell
-def _(mo, np, px, table):
-    _fig = px.histogram(np.log1p(table["passengers"]), nbins=60, title="log1p(passengers) across the full feature table")
-    _fig.update_layout(height=300, margin=dict(t=40, b=20), showlegend=False)
     mo.ui.plotly(_fig)
     return
 
