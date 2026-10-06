@@ -27,7 +27,7 @@ Sep 1–21) adds closures and rain the short hold-out week lacks. No shuffling, 
 normal profile is refit per fold so no test hour leaks into "normal".
 
 Artifacts land in `results/anomaly/` (see `run_and_cache`), which the marimo notebook
-`notebooks/04_anomaly_early_warning.py` and the webapp dashboard read.
+`notebooks/02_anomaly_early_warning.py` and the webapp dashboard read.
 """
 from __future__ import annotations
 
