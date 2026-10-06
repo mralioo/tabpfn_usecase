@@ -3,7 +3,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help install test dashboard dashboard-streamlit dashboard-closures notebooks cli train train-db clean
+.PHONY: help install test dashboard dashboard-streamlit dashboard-closures dashboard-warning notebooks cli train train-db anomaly anomaly-offline clean
 
 help: ## Show this help
 	@echo "Targets:"
@@ -25,8 +25,10 @@ dashboard: dashboard-streamlit ## Alias for dashboard-streamlit (back-compat)
 dashboard-streamlit: install ## Streamlit: Berlin/Finnish exploration, live prediction, both benchmarks
 	$(PY) -m streamlit run dashboard/app.py
 
-dashboard-closures: install ## Closure Impact Lab: live XGBoost vs TabPFN-3.5 what-if map + chat -> http://127.0.0.1:8000
+dashboard-closures: install ## Webapp: Early-Warning Desk (/) + Closure Impact Lab (/closures) -> http://127.0.0.1:8000
 	$(PY) -m uvicorn webapp.server:app --host 127.0.0.1 --port 8000
+
+dashboard-warning: dashboard-closures ## Alias: the Early-Warning Desk is the webapp's home page
 
 notebooks: install ## Open the marimo exploration notebooks (data EDA, demand/overcrowding, closures, energy)
 	$(PY) -m marimo edit notebooks/
@@ -39,6 +41,12 @@ train: install ## Fit TabPFN-3.5 on the Berlin U-Bahn data, benchmark vs. the hi
 
 train-db: install ## Benchmark TabPFN-3.5 vs. XGBoost on the Deutsche Bahn railway data -> results/metrics_db.json
 	$(PY) scripts/train_and_eval_db.py
+
+anomaly: install ## Anomaly early warning: normalise flows, benchmark baseline/XGBoost/TabPFN-3.5 on 2 folds -> results/anomaly/
+	$(PY) scripts/run_anomaly_benchmark.py
+
+anomaly-offline: install ## Same as `anomaly` without TabPFN-3.5 API calls (XGBoost + baselines, ~30 s)
+	$(PY) scripts/run_anomaly_benchmark.py --offline
 
 clean: ## Remove the venv and __pycache__ directories (keeps .env, data/, results/)
 	rm -rf $(VENV)

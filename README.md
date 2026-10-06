@@ -35,7 +35,56 @@ Both are benchmarked (`tabpfn_lab/evaluate.py`) against a **historical-average b
 date overlap with training. Honest result: on this dataset TabPFN-3.5 roughly **ties** that
 baseline (ROC-AUC 0.853 vs. 0.855; MAE 94.1 vs. 92.1) — the simulated flow is strongly periodic,
 so a one-line lookup table is already close to optimal, and no model clearly beats it. That's a
-real finding, not a weak result to hide: it's also *why* the second benchmark below exists.
+real finding, not a weak result to hide: it's also *why* the refined use case and the second
+benchmark below exist.
+
+## The refined use case: anomaly early warning
+
+The p90 target above is mostly the clock (rush hours, night gap, weekends): over 80% of hourly
+log-flow variance is explained by a per-(station, day type, hour) profile alone. An operator does
+not need a model for that. They need to know when a station will run **off its normal pattern**
+because of a concert, a closure or the weather, early enough to act. `tabpfn_lab/anomaly.py`:
+
+1. **Normalise**: hourly flow per station, robust normal profile (median of `log1p(flow)` per
+   station × day type × hour, training weeks only), anomaly score
+   `z = residual / MAD(station, hour)`. `surge` = z ≥ 2, `drop` = z ≤ −2.
+2. **Attribute**: context known a day ahead. Events are mapped to the nearest U-Bahn station
+   (curated `VENUE_TO_STATION`) and ticket tiers deduplicated. Closures are resolved on the
+   network graph (line suspensions → stations on the segment). Weather is included as well.
+3. **Forecast** with five models on the same features: profile baseline (clock only), XGBoost
+   (clock only), XGBoost (context, full history), XGBoost (context, same 10k rows as TabPFN),
+   TabPFN-3.5 (10k-row in-context sample that includes every event/closure hour).
+4. **Evaluate** on two expanding-window folds: Alstom's own hold-out (`*_rest`, Sep 22–30,
+   InnoTrans week) and a Sep 1–21 backtest. Metrics are PR-AUC for surges, recall inside a 2%
+   alarm budget (overall, event-driven, closure collapses) and z error.
+
+**Real numbers** (`make anomaly`, both folds pooled, 100,200 test station-hours, surge rate 2.1%):
+
+| Model | Training rows | PR-AUC | Event surges caught | Closure collapses forecast |
+| --- | --- | --- | --- | --- |
+| Profile baseline (clock only) | all | 0.049 | 14% | 0% |
+| XGBoost, clock only | all | 0.074 | 16% | 0% |
+| XGBoost, context | 10k (same as TabPFN) | 0.068 | 39% | 92% |
+| **TabPFN-3.5, context** | **10k** | **0.089** | **58%** | **100%** |
+| XGBoost, context | 277k–347k (full) | 0.110 | 76% | 92% |
+
+Reading it plainly:
+- **Context is what makes early warning possible.** Clock-only models never forecast a closure
+  collapse and miss most event surges.
+- **At equal data, TabPFN-3.5 wins** (+31% PR-AUC, ~1.5× the event surges). The XGBoost learning
+  curve needs **~50k rows (5×)** to match TabPFN-3.5 at 10k.
+- **With the full history (28–35× more rows), XGBoost wins.** TabPFN-3.5 is the tool for
+  short-history situations (new station, venue or line; a new question that needs an answer
+  today, no pipeline). A trained GBM is the tool once months of labelled data exist. Both use
+  the same feature table.
+- Most |z| ≥ 2 hours in this simulated data have no known driver (noise). That caps precision
+  for every model. Line suspensions barely move flow and there is no spill-over to neighbouring
+  stations; a real network would show both.
+- Latency: TabPFN-3.5 fits in ~5 s and scores ~1–2 s per 1,000 station-hours over the API.
+  That suits a day-ahead plan (168 stations × 20 h ≈ 3,400 rows), not a sub-second loop.
+
+Walk-through: `notebooks/04_anomaly_early_warning.py`. Operator view: the **Early-Warning Desk**
+(`make dashboard-closures`, http://127.0.0.1:8000/).
 
 ## A bigger, harder benchmark: TabPFN-3.5 vs. XGBoost on real railway data
 
@@ -89,20 +138,26 @@ tabpfn_lab/
    ├── evaluate.py, evaluate_db.py                         benchmark runners
    ├── mcp_server/     FastMCP server exposing the two predict_* tools (+ resolve_station, describe_dataset)
    ├── agent/          one LLM tool-calling loop (LiteLLM) over the MCP server — picks the tool by use case
+   ├── anomaly.py      anomaly early warning: normal profile + z, event/closure/weather context,
+   │                   profile baseline / XGBoost / TabPFN-3.5 on two folds -> results/anomaly/
    ├── closure_impact.py   what-if engine behind webapp/ — real BFS + XGBoost + TabPFN-3.5 scoring
    ├── dashboard/      Streamlit, multi-page: Overview · Berlin Explore · Finnish Explore ·
    │                   Live Prediction · Benchmark (Berlin) · Benchmark (Deutsche Bahn)
-   ├── webapp/         Closure Impact Lab — Starlette app: U-Bahn map + operator chat + live
-   │                   XGBoost-vs-TabPFN-3.5 comparison for hypothetical station/line closures
+   ├── webapp/         Starlette app, two pages: Early-Warning Desk (/) — anomaly map, timeline,
+   │                   scenarios, model scoreboard, live TabPFN-3.5 re-score; Closure Impact Lab
+   │                   (/closures) — map + chat what-if for hypothetical station/line closures
    └── notebooks/      marimo notebooks, one per use case — data EDA, demand/overcrowding,
-                        closure impact + network resilience, energy forecasting
+                        closure impact + network resilience, energy forecasting, anomaly early warning
 ```
 
 Two separate dashboards, two different jobs: `dashboard/` (Streamlit) is for *exploring* the
-datasets and benchmarks; `webapp/` (Closure Impact Lab) is a live *what-if* tool — pick a real
-closure scenario from the Berlin dataset, and it runs genuine XGBoost and TabPFN-3.5 inference
-(same `tabpfn_lab` code the MCP server uses) on the affected stations, side by side, with an
-agent-trace panel showing each MCP/model call as it happens. `make dashboard-streamlit` vs.
+datasets and benchmarks; `webapp/` is the operator view. Its home page, the **Early-Warning
+Desk**, replays the test weeks hour by hour: stations coloured by forecast or actual anomaly z,
+alarm rings from the selected model, a timeline of alarms vs. actual surges, scenario cards
+(events, closures, rain) with each model's verdict and a suggested action, and a one-click live
+TabPFN-3.5 re-score. It reads `results/anomaly/` (`make anomaly`). The **Closure Impact Lab**
+(`/closures`) is the live *what-if* tool: pick a real closure scenario and it runs XGBoost and
+TabPFN-3.5 inference on the affected stations side by side. `make dashboard-streamlit` vs.
 `make dashboard-closures`.
 
 `notebooks/` (`make notebooks`) is where the use cases themselves got worked out: each marimo
@@ -139,7 +194,9 @@ cp .env.example .env
 
 make test                # data/feature smoke tests, no API calls needed
 make dashboard-streamlit  # streamlit: Berlin/Finnish exploration + live prediction + both benchmarks
-make dashboard-closures   # Closure Impact Lab: live XGBoost vs TabPFN-3.5 what-if map -> http://127.0.0.1:8000
+make anomaly              # anomaly early warning: baseline / XGBoost / TabPFN-3.5 on 2 folds -> results/anomaly/ (~4 min)
+make anomaly-offline      # same without TabPFN-3.5 API calls (~30 s)
+make dashboard-closures   # webapp: Early-Warning Desk (/) + Closure Impact Lab (/closures) -> http://127.0.0.1:8000
 make notebooks            # marimo exploration notebooks: one per use case, loads real data + fits real models
 make cli                  # interactive agent: ask a crowd-risk or demand question
 make train                # Berlin: TabPFN-3.5 vs. historical baseline -> results/metrics.json
@@ -150,7 +207,8 @@ make help                 # list every target
 (No `make`? The underlying commands are plain `python -m venv .venv`, `pip install -r
 requirements.txt`, `pytest tests/`, `streamlit run dashboard/app.py`,
 `uvicorn webapp.server:app --port 8000`, `marimo edit notebooks/`, `python agent/cli.py`,
-`python scripts/train_and_eval.py`, `python scripts/train_and_eval_db.py` — see `Makefile`.)
+`python scripts/train_and_eval.py`, `python scripts/train_and_eval_db.py`,
+`python scripts/run_anomaly_benchmark.py` — see `Makefile`.)
 
 Example CLI questions:
 - `"will Alexanderplatz be overcrowded at 2026-07-15 08:00:00?"` → agent calls `resolve_station`,

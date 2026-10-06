@@ -1,0 +1,499 @@
+{
+  "created": "2026-10-06T16:09:51",
+  "definitions": {
+    "surge_z": 2.0,
+    "drop_z": -2.0,
+    "alarm_budget": 0.02,
+    "tabpfn_context_rows": 10000,
+    "min_scale": 0.15,
+    "profile_features": [
+      "hour",
+      "daytype",
+      "n_lines",
+      "is_interchange",
+      "primary_line",
+      "normal_level",
+      "station_scale"
+    ],
+    "context_features": [
+      "temp",
+      "prcp",
+      "prcp_3h",
+      "wspd",
+      "cldc",
+      "coco",
+      "event_ingress_att",
+      "event_ongoing_att",
+      "event_egress_att",
+      "event_nearby_egress_att",
+      "city_event_att_day",
+      "station_closed",
+      "line_suspended_here",
+      "neighbor_closed",
+      "network_closures_active"
+    ]
+  },
+  "folds": {
+    "holdout": {
+      "label": "Alstom hold-out \u00b7 Sep 22\u201330 (InnoTrans week)",
+      "train": [
+        "2026-06-10 05:00:00",
+        "2026-09-21 23:00:00"
+      ],
+      "test": [
+        "2026-09-22 00:00:00",
+        "2026-09-30 23:00:00"
+      ],
+      "n_train_rows": 347193,
+      "n_test_rows": 30060,
+      "alarm_k": 601,
+      "test_surge_rate": 0.021224218230206253,
+      "drivers_in_test": {
+        "closure": {
+          "hours": 101,
+          "surges": 3
+        },
+        "event": {
+          "hours": 346,
+          "surges": 33
+        },
+        "none": {
+          "hours": 29613,
+          "surges": 602
+        }
+      },
+      "models": {
+        "Profile baseline": {
+          "key": "profile",
+          "roc_auc": 0.6792,
+          "pr_auc": 0.0479,
+          "alarm_precision": 0.0982,
+          "alarm_recall": 0.0925,
+          "z_mae": 0.8529,
+          "z_mae_context": 1.0869,
+          "passenger_mae": 182.0994,
+          "recall_explained": 0.25,
+          "recall_event": 0.2727,
+          "recall_closure": 0.0,
+          "recall_rain": null,
+          "recall_heat": null,
+          "closure_drop_recall": 0.0,
+          "n_train": 347193,
+          "fit_s": 0.0,
+          "predict_s": 0.0,
+          "alarm_threshold": 0.06756756756756757
+        },
+        "XGBoost (profile only)": {
+          "key": "xgb_profile",
+          "roc_auc": 0.77,
+          "pr_auc": 0.0677,
+          "alarm_precision": 0.1115,
+          "alarm_recall": 0.105,
+          "z_mae": 0.8649,
+          "z_mae_context": 1.1047,
+          "passenger_mae": 186.0589,
+          "recall_explained": 0.2778,
+          "recall_event": 0.303,
+          "recall_closure": 0.0,
+          "recall_rain": null,
+          "recall_heat": null,
+          "closure_drop_recall": 0.0,
+          "n_train": 347193,
+          "fit_s": 5.094731591991149,
+          "predict_s": 0.08520024199970067,
+          "alarm_threshold": 0.051942843943834305
+        },
+        "XGBoost (full history)": {
+          "key": "xgb_full",
+          "roc_auc": 0.76,
+          "pr_auc": 0.1019,
+          "alarm_precision": 0.1165,
+          "alarm_recall": 0.1097,
+          "z_mae": 0.8484,
+          "z_mae_context": 0.9421,
+          "passenger_mae": 182.4549,
+          "recall_explained": 0.7222,
+          "recall_event": 0.7879,
+          "recall_closure": 0.0,
+          "recall_rain": null,
+          "recall_heat": null,
+          "closure_drop_recall": 0.75,
+          "n_train": 347193,
+          "fit_s": 7.929365889009205,
+          "predict_s": 0.08142435700574424,
+          "alarm_threshold": 0.06235693395137787
+        },
+        "XGBoost (10k sample)": {
+          "key": "xgb_small",
+          "roc_auc": 0.7133,
+          "pr_auc": 0.0665,
+          "alarm_precision": 0.0915,
+          "alarm_recall": 0.0862,
+          "z_mae": 0.9027,
+          "z_mae_context": 0.9411,
+          "passenger_mae": 193.8656,
+          "recall_explained": 0.4722,
+          "recall_event": 0.5152,
+          "recall_closure": 0.0,
+          "recall_rain": null,
+          "recall_heat": null,
+          "closure_drop_recall": 0.75,
+          "n_train": 10000,
+          "fit_s": 1.047665259000496,
+          "predict_s": 0.07842356999753974,
+          "alarm_threshold": 0.5647004246711731
+        },
+        "TabPFN-3.5 (10k context)": {
+          "key": "tabpfn",
+          "roc_auc": 0.7589,
+          "pr_auc": 0.0834,
+          "alarm_precision": 0.0998,
+          "alarm_recall": 0.094,
+          "z_mae": 0.8878,
+          "z_mae_context": 0.9023,
+          "passenger_mae": 185.8406,
+          "recall_explained": 0.5,
+          "recall_event": 0.5455,
+          "recall_closure": 0.0,
+          "recall_rain": null,
+          "recall_heat": null,
+          "closure_drop_recall": 1.0,
+          "n_train": 10000,
+          "fit_s": 4.739049306008383,
+          "predict_s": 51.11103725900466,
+          "alarm_threshold": 0.4670565128326416
+        }
+      },
+      "seconds": 75.1,
+      "xgboost_learning_curve": [
+        {
+          "n_train": 5000,
+          "pr_auc": 0.0638,
+          "recall_event": 0.5455,
+          "alarm_precision": 0.0782,
+          "fit_s": 0.44
+        },
+        {
+          "n_train": 10000,
+          "pr_auc": 0.0665,
+          "recall_event": 0.5152,
+          "alarm_precision": 0.0915,
+          "fit_s": 0.49
+        },
+        {
+          "n_train": 25000,
+          "pr_auc": 0.0735,
+          "recall_event": 0.5152,
+          "alarm_precision": 0.0965,
+          "fit_s": 0.68
+        },
+        {
+          "n_train": 50000,
+          "pr_auc": 0.0854,
+          "recall_event": 0.6364,
+          "alarm_precision": 0.1215,
+          "fit_s": 1.11
+        },
+        {
+          "n_train": 100000,
+          "pr_auc": 0.0926,
+          "recall_event": 0.6667,
+          "alarm_precision": 0.1098,
+          "fit_s": 2.7
+        },
+        {
+          "n_train": 200000,
+          "pr_auc": 0.0986,
+          "recall_event": 0.7879,
+          "alarm_precision": 0.1281,
+          "fit_s": 4.63
+        },
+        {
+          "n_train": 347193,
+          "pr_auc": 0.1019,
+          "recall_event": 0.7879,
+          "alarm_precision": 0.1165,
+          "fit_s": 6.16
+        }
+      ]
+    },
+    "backtest": {
+      "label": "Backtest \u00b7 Sep 1\u201321",
+      "train": [
+        "2026-06-10 05:00:00",
+        "2026-08-31 23:00:00"
+      ],
+      "test": [
+        "2026-09-01 00:00:00",
+        "2026-09-21 23:00:00"
+      ],
+      "n_train_rows": 277053,
+      "n_test_rows": 70140,
+      "alarm_k": 1403,
+      "test_surge_rate": 0.020872540633019673,
+      "drivers_in_test": {
+        "closure": {
+          "hours": 145,
+          "surges": 5
+        },
+        "event": {
+          "hours": 766,
+          "surges": 92
+        },
+        "heat": {
+          "hours": 494,
+          "surges": 11
+        },
+        "none": {
+          "hours": 63604,
+          "surges": 1189
+        },
+        "rain": {
+          "hours": 5131,
+          "surges": 167
+        }
+      },
+      "models": {
+        "Profile baseline": {
+          "key": "profile",
+          "roc_auc": 0.6568,
+          "pr_auc": 0.0487,
+          "alarm_precision": 0.1041,
+          "alarm_recall": 0.0997,
+          "z_mae": 0.8734,
+          "z_mae_context": 0.9295,
+          "passenger_mae": 169.7773,
+          "recall_explained": 0.12,
+          "recall_event": 0.1304,
+          "recall_closure": 0.0,
+          "recall_rain": 0.1138,
+          "recall_heat": 0.1818,
+          "closure_drop_recall": 0.0,
+          "n_train": 277053,
+          "fit_s": 0.0,
+          "predict_s": 0.0,
+          "alarm_threshold": 0.0847457627118644
+        },
+        "XGBoost (profile only)": {
+          "key": "xgb_profile",
+          "roc_auc": 0.7737,
+          "pr_auc": 0.0783,
+          "alarm_precision": 0.1397,
+          "alarm_recall": 0.1339,
+          "z_mae": 0.8756,
+          "z_mae_context": 0.9458,
+          "passenger_mae": 170.6632,
+          "recall_explained": 0.1418,
+          "recall_event": 0.163,
+          "recall_closure": 0.2,
+          "recall_rain": 0.1317,
+          "recall_heat": 0.0909,
+          "closure_drop_recall": 0.0,
+          "n_train": 277053,
+          "fit_s": 2.692110789997969,
+          "predict_s": 0.13923304800118785,
+          "alarm_threshold": 0.0629480630159378
+        },
+        "XGBoost (full history)": {
+          "key": "xgb_full",
+          "roc_auc": 0.7845,
+          "pr_auc": 0.1132,
+          "alarm_precision": 0.1597,
+          "alarm_recall": 0.153,
+          "z_mae": 0.8651,
+          "z_mae_context": 0.8586,
+          "passenger_mae": 168.9673,
+          "recall_explained": 0.4836,
+          "recall_event": 0.7391,
+          "recall_closure": 0.0,
+          "recall_rain": 0.3892,
+          "recall_heat": 0.0,
+          "closure_drop_recall": 1.0,
+          "n_train": 277053,
+          "fit_s": 5.18792833200132,
+          "predict_s": 0.13945064099971205,
+          "alarm_threshold": 0.07244963943958282
+        },
+        "XGBoost (10k sample)": {
+          "key": "xgb_small",
+          "roc_auc": 0.7084,
+          "pr_auc": 0.0706,
+          "alarm_precision": 0.1112,
+          "alarm_recall": 0.1066,
+          "z_mae": 0.8965,
+          "z_mae_context": 0.8717,
+          "passenger_mae": 175.1418,
+          "recall_explained": 0.1164,
+          "recall_event": 0.3478,
+          "recall_closure": 0.0,
+          "recall_rain": 0.0,
+          "recall_heat": 0.0,
+          "closure_drop_recall": 1.0,
+          "n_train": 10000,
+          "fit_s": 0.8855377860018052,
+          "predict_s": 0.14047023499733768,
+          "alarm_threshold": 0.48778724670410156
+        },
+        "TabPFN-3.5 (10k context)": {
+          "key": "tabpfn",
+          "roc_auc": 0.7513,
+          "pr_auc": 0.0966,
+          "alarm_precision": 0.1504,
+          "alarm_recall": 0.1441,
+          "z_mae": 0.8841,
+          "z_mae_context": 0.8605,
+          "passenger_mae": 171.8179,
+          "recall_explained": 0.2036,
+          "recall_event": 0.5978,
+          "recall_closure": 0.0,
+          "recall_rain": 0.006,
+          "recall_heat": 0.0,
+          "closure_drop_recall": 1.0,
+          "n_train": 10000,
+          "fit_s": 4.382515543999034,
+          "predict_s": 81.55231225800526,
+          "alarm_threshold": 0.41157469153404236
+        }
+      },
+      "seconds": 96.5,
+      "xgboost_learning_curve": [
+        {
+          "n_train": 5000,
+          "pr_auc": 0.0634,
+          "recall_event": 0.4565,
+          "alarm_precision": 0.1076,
+          "fit_s": 0.58
+        },
+        {
+          "n_train": 10000,
+          "pr_auc": 0.0706,
+          "recall_event": 0.3478,
+          "alarm_precision": 0.1112,
+          "fit_s": 0.72
+        },
+        {
+          "n_train": 25000,
+          "pr_auc": 0.0774,
+          "recall_event": 0.4674,
+          "alarm_precision": 0.1254,
+          "fit_s": 1.01
+        },
+        {
+          "n_train": 50000,
+          "pr_auc": 0.0941,
+          "recall_event": 0.5652,
+          "alarm_precision": 0.1383,
+          "fit_s": 1.44
+        },
+        {
+          "n_train": 100000,
+          "pr_auc": 0.1006,
+          "recall_event": 0.6848,
+          "alarm_precision": 0.144,
+          "fit_s": 2.36
+        },
+        {
+          "n_train": 200000,
+          "pr_auc": 0.1104,
+          "recall_event": 0.7391,
+          "alarm_precision": 0.1604,
+          "fit_s": 4.47
+        },
+        {
+          "n_train": 277053,
+          "pr_auc": 0.1132,
+          "recall_event": 0.7391,
+          "alarm_precision": 0.1597,
+          "fit_s": 4.97
+        }
+      ]
+    }
+  },
+  "pooled": {
+    "n_test_rows": 100200,
+    "test_surge_rate": 0.02097804391217565,
+    "models": {
+      "Profile baseline": {
+        "key": "profile",
+        "roc_auc": 0.6629,
+        "pr_auc": 0.0494,
+        "alarm_precision": 0.1023,
+        "alarm_recall": 0.0975,
+        "z_mae": 0.8672,
+        "z_mae_context": 0.9395,
+        "passenger_mae": 173.4739,
+        "recall_explained": 0.1415,
+        "recall_event": 0.136,
+        "recall_closure": 0.0,
+        "recall_rain": 0.1497,
+        "recall_heat": 0.1818,
+        "closure_drop_recall": 0.0
+      },
+      "XGBoost (profile only)": {
+        "key": "xgb_profile",
+        "roc_auc": 0.7715,
+        "pr_auc": 0.0745,
+        "alarm_precision": 0.1282,
+        "alarm_recall": 0.1223,
+        "z_mae": 0.8724,
+        "z_mae_context": 0.956,
+        "passenger_mae": 175.2819,
+        "recall_explained": 0.1576,
+        "recall_event": 0.16,
+        "recall_closure": 0.125,
+        "recall_rain": 0.1617,
+        "recall_heat": 0.0909,
+        "closure_drop_recall": 0.0
+      },
+      "XGBoost (full history)": {
+        "key": "xgb_full",
+        "roc_auc": 0.7771,
+        "pr_auc": 0.1098,
+        "alarm_precision": 0.1477,
+        "alarm_recall": 0.1408,
+        "z_mae": 0.8601,
+        "z_mae_context": 0.8639,
+        "passenger_mae": 173.0136,
+        "recall_explained": 0.5241,
+        "recall_event": 0.76,
+        "recall_closure": 0.0,
+        "recall_rain": 0.4072,
+        "recall_heat": 0.0,
+        "closure_drop_recall": 0.9167
+      },
+      "XGBoost (10k sample)": {
+        "key": "xgb_small",
+        "roc_auc": 0.7065,
+        "pr_auc": 0.0676,
+        "alarm_precision": 0.1048,
+        "alarm_recall": 0.0999,
+        "z_mae": 0.8983,
+        "z_mae_context": 0.8761,
+        "passenger_mae": 180.7589,
+        "recall_explained": 0.1576,
+        "recall_event": 0.392,
+        "recall_closure": 0.0,
+        "recall_rain": 0.0,
+        "recall_heat": 0.0,
+        "closure_drop_recall": 0.9167
+      },
+      "TabPFN-3.5 (10k context)": {
+        "key": "tabpfn",
+        "roc_auc": 0.7497,
+        "pr_auc": 0.0891,
+        "alarm_precision": 0.1317,
+        "alarm_recall": 0.1256,
+        "z_mae": 0.8852,
+        "z_mae_context": 0.8631,
+        "passenger_mae": 176.0247,
+        "recall_explained": 0.2315,
+        "recall_event": 0.576,
+        "recall_closure": 0.0,
+        "recall_rain": 0.0,
+        "recall_heat": 0.0,
+        "closure_drop_recall": 1.0
+      }
+    }
+  },
+  "live_tabpfn": true
+}
