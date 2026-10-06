@@ -1,14 +1,12 @@
-# Data provenance — three datasets, three roles
+# Data provenance — two datasets, two roles
 
 `data/` holds one subfolder per dataset. Each has its own loader module under
-`tabpfn_lab/datasets/` (see `docs/MODULES.md`). None of the three were collected by this
-project.
+`tabpfn_lab/datasets/`. Neither was collected by this project.
 
 | Folder | Role in this repo | Size | Real / simulated | Committed to git? |
 | --- | --- | --- | --- | --- |
-| `Berlin_Ubahn_Alstom_data/` | Agent + MCP demo, honest baseline check | 1.5M rows | Simulated flow, real geometry | Yes (small CSVs) |
+| `Berlin_Ubahn_Alstom_data/` | The use case: anomaly early warning, MCP + agent, webapp | 1.5M rows | Simulated flow/closures, real geometry/events/weather | Yes (small CSVs) |
 | `DB_data/` | TabPFN-3.5 vs. XGBoost, big real data | ~1.5-2M rows/month | Real | No (fetched on demand) |
-| `Finnish_Railway_Operations_data/` | Biggest, multi-year scale/drift exploration | ~500k rows/month × 96 months | Real | No (2.75 GB, placed locally) |
 
 ## Berlin U-Bahn (Alstom / InnoTrans 2026)
 
@@ -20,7 +18,7 @@ closures and energy-consumption series. Full details, splits and the dataset sch
 Reused here, unmodified, for the **TabPFN-3.5 hackathon** (platform.priorlabs.ai) under that
 hackathon's rule 3.2 ("the linked repository must contain ... your input data or make it
 available at a public URL"). This repo makes no ownership claim over the data itself — only over
-the code in `tabpfn_lab/`, `mcp_server/`, `agent/`, `dashboard/` and `scripts/`.
+the code in `tabpfn_lab/`, `mcp_server/`, `agent/`, `webapp/`, `notebooks/` and `scripts/`.
 
 ## Deutsche Bahn (`DB_data/`)
 
@@ -32,22 +30,6 @@ Hugging Face (CC BY 4.0, built from Deutsche Bahn's own public timetable/delay f
 page: [github.com/piebro/deutsche-bahn-data](https://github.com/piebro/deutsche-bahn-data)).
 Fetched on demand via `tabpfn_lab/datasets/deutsche_bahn.py` (`huggingface_hub.hf_hub_download`,
 no auth for this public dataset) and mirrored into `DB_data/` (gitignored) after the first call.
-
-## Finnish railway (`Finnish_Railway_Operations_data/`)
-
-VR (Finnish state railway) long-distance train stops matched against FMI (Finnish Meteorological
-Institute) weather observations — 96 monthly parquet files, January 2018 through December 2025,
-~2.75 GB. This is the dataset behind the **FI-TW paper** — "An Open Train-Weather Dataset for
-Railway Delay Analysis in Finland" (arXiv:2601.16592) — built from Finland's Digitraffic Railway
-Traffic Service and FMI open data. Canonical hosting: Kaggle, DOI
-[10.34740/kaggle/dsv/14124620](https://doi.org/10.34740/kaggle/dsv/14124620).
-
-**Reproducibility note, stated plainly**: unlike the other two datasets, this one is not fetched
-by any script in this repo — the files were placed under `data/Finnish_Railway_Operations_data/`
-directly (a Kaggle download). A third party reproducing this repo needs a free Kaggle account to
-get the same files; that's a real gap versus the other two datasets' zero-auth, one-function-call
-reproducibility, flagged here rather than glossed over. Loader: `tabpfn_lab/datasets/finnish.py`
-(`list_available_months()` reports what's actually present locally).
 
 ## Lineage
 
