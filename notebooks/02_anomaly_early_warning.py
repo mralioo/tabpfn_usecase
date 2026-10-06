@@ -562,6 +562,153 @@ def _(A, live_button, mo, pd, scenario):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ## 7 · Across the network — where the load goes, hour by hour
+
+    Station forecasts become network forecasts when they are read along the topology. For a
+    chosen hour, `tabpfn_lab/operations.py` aggregates the TabPFN-3.5 forecast per line (load vs
+    normal) and lays one line out in running order, terminus to terminus — the **line
+    corridor** — so you see where along the line pressure builds (event egress) or collapses
+    (closure). These are the same functions the MCP tools `network_outlook` and `line_corridor`
+    expose to the agent (webapp page `/agent`).
+    """)
+    return
+
+
+@app.cell
+def _(A, mo, pd):
+    from tabpfn_lab import operations as ops
+
+    _hours = sorted(A.anomaly_table("holdout").query("split == 'test'")["ts"].unique())
+    hour_pick = mo.ui.dropdown(options={pd.Timestamp(h).strftime("%a %d %b %H:00"): pd.Timestamp(h).isoformat() for h in _hours},
+                               value="Mon 28 Sep 22:00", label="Hour (hold-out week)", searchable=True)
+    line_pick = mo.ui.dropdown(options=list(ops.line_sequences()), value="U1", label="Line")
+    mo.hstack([hour_pick, line_pick], justify="start", gap=2)
+    return hour_pick, line_pick, ops
+
+
+@app.cell
+def _(INK, MODEL_COLORS, SURGE, go, hour_pick, line_pick, mo, ops, pd, style):
+    outlook = ops.network_outlook(hour_pick.value)
+    corridor = ops.line_corridor(line_pick.value, hour_pick.value)
+    _lines = pd.DataFrame(outlook["lines"])
+    _stops = pd.DataFrame(corridor["stops"])
+    _fig = go.Figure()
+    _fig.add_trace(go.Bar(x=_stops["station"].str.replace(r"^(S\+U|U) ", "", regex=True), y=_stops["forecast_passengers"],
+                          name="TabPFN-3.5 forecast",
+                          marker_color=[SURGE if a else MODEL_COLORS["TabPFN-3.5 (10k context)"] for a in _stops["alarm"]]))
+    _fig.add_trace(go.Scatter(x=_stops["station"].str.replace(r"^(S\+U|U) ", "", regex=True), y=_stops["normal_passengers"],
+                              name="normal", mode="markers", marker=dict(symbol="line-ew-open", size=18, color=INK, line=dict(width=3))))
+    _fig.add_trace(go.Scatter(x=_stops["station"].str.replace(r"^(S\+U|U) ", "", regex=True), y=_stops["observed_replay_passengers"],
+                              name="observed (replay)", mode="markers", marker=dict(size=7, color="#8a8984")))
+    style(_fig, f"{corridor['line']} corridor {' → '.join(corridor['terminus_to_terminus'])} — {pd.Timestamp(hour_pick.value):%a %d %b %H:00} (red = surge alarm)",
+          height=380, ytitle="passengers / h")
+    _fig.update_layout(hovermode="x", bargap=0.25)
+    _net = outlook["network"]
+    mo.vstack([
+        mo.hstack([
+            mo.stat(f"{_net['forecast_passengers']:,}", label="network forecast, riders/h",
+                    caption=f"normal {_net['normal_passengers']:,} ({100 * (_net['forecast_passengers'] / max(_net['normal_passengers'], 1) - 1):+.0f}%)"),
+            mo.stat(f"{_net['alarms']}", label="surge alarms (TabPFN-3.5)", caption=f"{outlook['observed_replay']['alarms_that_surged']} surged in reality"),
+            mo.stat(f"{outlook['weather']['temp_c']} °C · {outlook['weather']['rain_mm']} mm", label="weather"),
+        ], widths="equal"),
+        mo.ui.plotly(_fig),
+        mo.md("**Load vs normal per line** (sum of the TabPFN-3.5 station forecasts along each line):"),
+        mo.ui.table(_lines, selection=None, pagination=False),
+        mo.md("**Alarms this hour, with drivers:**"),
+        mo.ui.table(pd.DataFrame(outlook["top_alarms"]).drop(columns=["observed_replay"]), selection=None, pagination=False),
+    ])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### What-if, live: TabPFN-3.5 as a counterfactual engine
+
+    The same context features let an operator ask about a situation that is *not* in the
+    calendar: an extra event, a closure, rain. `ops.what_if` scores the station-hours twice in
+    one TabPFN-3.5 call — as scheduled and with the hypothetical context — and for a closure it
+    scores the neighbouring stations too.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    wi_station = mo.ui.text(value="Olympia-Stadion", label="Station")
+    wi_start = mo.ui.text(value="2026-09-29 19:00", label="From")
+    wi_att = mo.ui.number(start=0, stop=60000, step=500, value=3000, label="Event attendance")
+    wi_end = mo.ui.text(value="2026-09-29 22:00", label="Event ends")
+    wi_close = mo.ui.checkbox(label="Close the station")
+    wi_go = mo.ui.run_button(label="Run what-if with TabPFN-3.5 (live API)")
+    mo.vstack([mo.hstack([wi_station, wi_start, wi_att, wi_end, wi_close], justify="start", wrap=True), wi_go])
+    return wi_att, wi_close, wi_end, wi_go, wi_start, wi_station
+
+
+@app.cell
+def _(mo, ops, pd, wi_att, wi_close, wi_end, wi_go, wi_start, wi_station):
+    mo.stop(not wi_go.value, mo.md("*Press the button to call TabPFN-3.5.*"))
+    with mo.status.spinner("TabPFN-3.5: scoring as-scheduled and what-if…"):
+        whatif = ops.what_if(wi_station.value, wi_start.value, hours=5, event_attendance=int(wi_att.value),
+                             event_end=wi_end.value or None, close_station=wi_close.value)
+    mo.stop("error" in whatif, mo.callout(mo.md(whatif.get("error", "")), kind="warn"))
+    _rows = pd.DataFrame([{"station": h["station"], "hour": pd.Timestamp(h["hour"]).strftime("%a %H:00"),
+                           "normal": h["normal_passengers"], "as scheduled": h["as_scheduled"]["forecast_passengers"],
+                           "what-if": h["what_if"]["forecast_passengers"], "Δ riders": h["delta_passengers"],
+                           "what-if surge prob.": h["what_if"]["surge_probability"], "alarm": h["what_if"]["alarm"]}
+                          for h in whatif["hours"]])
+    _pk = whatif["peak_change"]
+    mo.vstack([
+        mo.callout(mo.md(f"**{whatif['scenario']}** → peak change at {_pk['station']} {pd.Timestamp(_pk['hour']):%H:00}: "
+                         f"{_pk['as_scheduled']['forecast_passengers']:,} → **{_pk['what_if']['forecast_passengers']:,}** riders/h "
+                         f"(normal {_pk['normal_passengers']:,}), surge probability {_pk['what_if']['surge_probability']:.0%}."
+                         f"  \n*{whatif['inference']['engine']} · fit {whatif['inference']['fit_s']} s · predict {whatif['inference']['predict_s']} s*"),
+                   kind="danger" if _pk["what_if"]["alarm"] else "info"),
+        mo.ui.table(_rows, selection=None, pagination=False),
+    ])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## 8 · The control-room agent
+
+    Everything above is also available to an LLM agent as MCP tools (`mcp_server/server.py`):
+    `network_outlook`, `line_corridor`, `station_forecast`, `explain_anomaly`, `what_if`,
+    `list_scenarios`, `model_scoreboard`. The agent (`agent/harness.py`, any LiteLLM model)
+    picks the tools, the tools run TabPFN-3.5, and the answer is written from the returned
+    numbers — with the tool trace below it. Needs `AGENT_LITELLM_MODEL` + its API key in `.env`.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    agent_q = mo.ui.text_area(value="A 3,000-person concert ends at Olympia-Stadion on 29 September at 22:00. "
+                                    "What happens and what should we do?", label="Question", full_width=True)
+    agent_go = mo.ui.run_button(label="Ask the agent (LLM + live TabPFN-3.5)")
+    mo.vstack([agent_q, agent_go])
+    return agent_go, agent_q
+
+
+@app.cell
+async def _(agent_go, agent_q, mo, pd):
+    mo.stop(not agent_go.value, mo.md("*Press the button to run the agent.*"))
+    from agent.harness import ask as _ask
+
+    with mo.status.spinner("Agent is calling MCP tools…"):
+        _out = await _ask(agent_q.value)
+    _trace = pd.DataFrame([{"tool": t["tool"], "args": str(t["args"]), "seconds": t["seconds"]}
+                           for t in _out["trace"] if t["step"] == "tool"])
+    mo.vstack([mo.md(_out["answer"]), mo.md(f"*{_out['model']} · {_out['seconds']} s total*"),
+               mo.ui.table(_trace, selection=None, pagination=False)])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ## Takeaways
 
     - **Normalise first.** Over 80% of hourly log-flow variance is the clock. Removing it with a

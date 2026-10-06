@@ -12,7 +12,7 @@ schema: [`dataset_schema.md`](dataset_schema.md) (copied from the organiser's br
 They are reused here, unmodified, for the **TabPFN-3.5 hackathon** (platform.priorlabs.ai) under
 that hackathon's rule 3.2 ("the linked repository must contain ... your input data or make it
 available at a public URL"). This repo makes no ownership claim over the data itself — only over
-the code in `tabpfn_lab/`, `mcp_server/`, `agent/`, `dashboard/` and `scripts/`.
+the code in `tabpfn_lab/`, `mcp_server/`, `agent/`, `webapp/`, `notebooks/` and `scripts/`.
 
 ## Splits
 

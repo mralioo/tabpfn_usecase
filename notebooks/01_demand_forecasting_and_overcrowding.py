@@ -37,20 +37,23 @@ def _(mo):
     mo.md(r"""
     # 01 — Demand forecasting & overcrowding: the two questions an operator actually asks
 
-    This is the use case the MCP server (`mcp_server/server.py`) already exposes as two
-    tools, picked by use case:
+    This notebook is the **motivation** for the project's final use case. It tests the
+    first, obvious framing of "overcrowding" and shows why it isn't enough:
 
-    - **`predict_overcrowding_risk`** (classification) — *"will this station be at/above
-      its own historical 90th-percentile flow in this 15-minute slot?"* — an early-warning
-      signal an operator acts on before a platform overfills.
-    - **`predict_expected_flow`** (regression) — *"how many passengers are expected?"* —
-      operational planning: staffing, train frequency.
+    - **Classification** — *"will this station be at/above its own historical
+      90th-percentile flow in this 15-minute slot?"*
+    - **Regression** — *"how many passengers are expected?"*
 
     Same feature row (time, weather, events, closure state, station context), two
-    specialised model calls. This notebook benchmarks three ways to answer both questions —
-    a historical-average **baseline**, a locally-fit **XGBoost** pair, and **TabPFN-3.5** —
-    and looks past the headline metric at calibration, per-station spread, and the
-    latency/data trade-off that's the actual point of comparing them.
+    model calls. We benchmark three ways to answer both questions — a historical-average
+    **lookup-table baseline**, a locally-fit **XGBoost** pair, and **TabPFN-3.5** — and look
+    past the headline metric at calibration, per-station spread, and latency.
+
+    **The punchline:** "flow ≥ the station's own P90" is mostly *the daily clock* — the
+    busy slots are the same hours every day — so a station × weekend × hour lookup table
+    already captures nearly all of it and TabPFN-3.5 can only tie it. The refined use case —
+    **anomaly early warning on normalised flows** (deviation from what's *expected* for that
+    station and time, not raw volume) — lives in `02_anomaly_early_warning.py`.
     """)
     return
 
@@ -69,28 +72,42 @@ def _():
 
 @app.cell
 def _():
-    from tabpfn_lab.config import load_dotenv
+    from tabpfn_lab.config import TABPFN_MODEL_PATH, authenticate, load_dotenv
     from tabpfn_lab.datasets.berlin import (
-        FEATURE_COLUMNS, chronological_split, encode_categoricals, stratified_subsample,
+        CATEGORICAL_COLUMNS, FEATURE_COLUMNS, build_feature_table, chronological_split,
+        discover_dataset_dir, encode_categoricals, stratified_subsample,
     )
-    from tabpfn_lab.baselines import (
-        fit_classification_baseline, fit_regression_baseline,
-        predict_classification_baseline, predict_regression_baseline,
-    )
-    from tabpfn_lab import closure_impact as ci
+    from tabpfn_lab.xgboost_baseline import DEFAULT_PARAMS
 
     _ = load_dotenv()
     return (
+        CATEGORICAL_COLUMNS,
+        DEFAULT_PARAMS,
         FEATURE_COLUMNS,
+        TABPFN_MODEL_PATH,
+        authenticate,
+        build_feature_table,
         chronological_split,
-        ci,
+        discover_dataset_dir,
         encode_categoricals,
-        fit_classification_baseline,
-        fit_regression_baseline,
-        predict_classification_baseline,
-        predict_regression_baseline,
         stratified_subsample,
     )
+
+
+@app.cell
+def _():
+    # Historical lookup baseline: mean of the target per (station, weekend-flag, hour),
+    # fit on the train pool only, fallback to the train-pool mean for unseen keys.
+    BASELINE_KEYS = ["station_name", "is_weekend", "hour"]
+
+    def fit_lookup_baseline(train_df, target_col):
+        return train_df.groupby(BASELINE_KEYS)[target_col].mean().rename("baseline").reset_index()
+
+    def predict_lookup_baseline(lookup, rows, fallback):
+        merged = rows[BASELINE_KEYS].merge(lookup, on=BASELINE_KEYS, how="left")
+        return merged["baseline"].fillna(fallback)
+
+    return fit_lookup_baseline, predict_lookup_baseline
 
 
 @app.cell
@@ -102,15 +119,14 @@ def _(mo):
     preprocessing step for this use case: it melts the wide flow table, repairs mojibake
     in station names, joins weather/events/closures, computes each station's own P90
     threshold, and drops rows with any missing feature — reused here rather than
-    reimplemented, so this notebook sees exactly what the MCP server and the Closure
-    Impact Lab see.
+    reimplemented.
     """)
     return
 
 
 @app.cell
-def _(chronological_split, ci, mo):
-    table = ci.get_feature_table()
+def _(build_feature_table, chronological_split, discover_dataset_dir, mo):
+    table = build_feature_table(discover_dataset_dir())
     train_pool, test_pool, cutoff = chronological_split(table)
     mo.md(
         f"""**Feature table**: {len(table):,} rows, {table["station_name"].nunique()} stations,
@@ -149,17 +165,62 @@ def _(mo):
     mo.md("""
     ## 3. Fit all three — once — then compare
 
-    `ci.get_xgb_bundle()` and `ci.get_tabpfn_models()` are the exact cached model objects
-    the Closure Impact Lab webapp uses (fit once, pickled to `results/model_cache/`), so
-    this notebook and that app are never comparing two different models by accident.
+    - **XGBoost** (default hyperparameters from `tabpfn_lab/xgboost_baseline.py`) — fit
+      locally on a random 300k-row sample of the train pool (keeps the notebook fast; more
+      rows barely move the metric on this strongly periodic data).
+    - **TabPFN-3.5** — one `.fit()` per task on an 8k-row stratified in-context sample of
+      the same train pool, via the `tabpfn_client` API. If no `TABPFN_API_TOKEN` is set,
+      the notebook falls back to baseline-vs-XGBoost only.
     """)
     return
 
 
 @app.cell
-def _(ci, mo):
-    xgb_bundle = ci.get_xgb_bundle()
-    tabpfn_models, tabpfn_error = ci.get_tabpfn_models()
+def _(
+    CATEGORICAL_COLUMNS,
+    DEFAULT_PARAMS,
+    FEATURE_COLUMNS,
+    TABPFN_MODEL_PATH,
+    authenticate,
+    encode_categoricals,
+    mo,
+    stratified_subsample,
+    time,
+    train_pool,
+):
+    from types import SimpleNamespace
+    from xgboost import XGBClassifier, XGBRegressor
+
+    XGB_TRAIN_ROWS = 300_000
+    _xgb_params = {**DEFAULT_PARAMS, "n_jobs": 8}  # n_jobs=-1 is pathologically slow on some machines
+    _xgb_train = train_pool.sample(min(XGB_TRAIN_ROWS, len(train_pool)), random_state=0)
+    _X = encode_categoricals(_xgb_train[FEATURE_COLUMNS])
+    _t0 = time.perf_counter()
+    _clf = XGBClassifier(**_xgb_params, eval_metric="logloss").fit(_X, _xgb_train["overcrowded"])
+    _reg = XGBRegressor(**_xgb_params).fit(_X, _xgb_train["passengers"])
+    xgb_bundle = {
+        "clf": _clf, "reg": _reg, "reference": _xgb_train[FEATURE_COLUMNS],
+        "fit_seconds": round(time.perf_counter() - _t0, 2), "n_rows": len(_xgb_train),
+    }
+
+    try:
+        authenticate()
+        from tabpfn_client import TabPFNClassifier, TabPFNRegressor
+
+        _sample = stratified_subsample(train_pool, 8_000, "overcrowded")
+        _Xs = encode_categoricals(_sample[FEATURE_COLUMNS])
+        _cat_idx = [FEATURE_COLUMNS.index(c) for c in CATEGORICAL_COLUMNS]
+        _t0 = time.perf_counter()
+        _tclf = TabPFNClassifier(model_path=TABPFN_MODEL_PATH, categorical_features_indices=_cat_idx)
+        _tclf.fit(_Xs, _sample["overcrowded"])
+        _treg = TabPFNRegressor(model_path=TABPFN_MODEL_PATH, categorical_features_indices=_cat_idx)
+        _treg.fit(_Xs, _sample["passengers"])
+        tabpfn_models = SimpleNamespace(classifier=_tclf, regressor=_treg, train_sample=_sample,
+                                        fit_seconds=time.perf_counter() - _t0)
+        tabpfn_error = None
+    except (SystemExit, Exception) as _exc:  # noqa: BLE001 - graceful fallback on anything
+        tabpfn_models, tabpfn_error = None, str(_exc)
+
     mo.md(
         f"""**XGBoost**: fit on {xgb_bundle["n_rows"]:,} rows in {xgb_bundle["fit_seconds"]}s.
         **TabPFN-3.5**: {"fit on a " + str(len(tabpfn_models.train_sample)) + "-row in-context sample in " + str(round(tabpfn_models.fit_seconds, 2)) + "s" if tabpfn_models else "unavailable (" + str(tabpfn_error) + ") — falling back to baseline-only comparisons below"}."""
@@ -171,8 +232,7 @@ def _(ci, mo):
 def _(
     FEATURE_COLUMNS,
     encode_categoricals,
-    fit_classification_baseline,
-    fit_regression_baseline,
+    fit_lookup_baseline,
     stratified_subsample,
     tabpfn_models,
     test_pool,
@@ -185,8 +245,8 @@ def _(
     y_class = test_sample["overcrowded"].to_numpy()
     y_reg = test_sample["passengers"].to_numpy(float)
 
-    rate_table = fit_classification_baseline(train_pool)
-    mean_table = fit_regression_baseline(train_pool)
+    rate_table = fit_lookup_baseline(train_pool, "overcrowded")
+    mean_table = fit_lookup_baseline(train_pool, "passengers")
 
     X_xgb = encode_categoricals(test_sample[FEATURE_COLUMNS], reference=xgb_bundle["reference"])
     _t0 = time.perf_counter()
@@ -234,18 +294,17 @@ def _():
 @app.cell
 def _(
     mean_table,
-    predict_classification_baseline,
-    predict_regression_baseline,
+    predict_lookup_baseline,
     rate_table,
     test_sample,
     time,
     train_pool,
 ):
     _t0 = time.perf_counter()
-    base_proba = predict_classification_baseline(rate_table, test_sample, float(train_pool["overcrowded"].mean())).to_numpy()
+    base_proba = predict_lookup_baseline(rate_table, test_sample, float(train_pool["overcrowded"].mean())).to_numpy()
     base_clf_s = time.perf_counter() - _t0
     _t0 = time.perf_counter()
-    base_expected = predict_regression_baseline(mean_table, test_sample, float(train_pool["passengers"].mean())).to_numpy()
+    base_expected = predict_lookup_baseline(mean_table, test_sample, float(train_pool["passengers"].mean())).to_numpy()
     base_reg_s = time.perf_counter() - _t0
     return base_clf_s, base_expected, base_proba, base_reg_s
 
@@ -394,10 +453,12 @@ def _(mo):
     mo.md(r"""
     ## 7. Takeaways for an agent deciding which tool to call
 
-    - **Accuracy**: on this dataset TabPFN-3.5 and XGBoost typically land close together, and
-      both are close to the historical-average baseline — the simulated flow is strongly
-      periodic, so a one-line lookup table is already most of the way there (same honest
-      finding the README reports: ROC-AUC 0.853 baseline vs 0.855 TabPFN-3.5 historically).
+    - **Accuracy**: TabPFN-3.5, XGBoost and the historical-average lookup table all land
+      within a hair of each other (a reference run: ROC-AUC 0.855 baseline / 0.846 XGBoost /
+      0.853 TabPFN-3.5; R² 0.37 / 0.38 / 0.41). The simulated flow is strongly periodic, so
+      "≥ own P90" is mostly the daily clock and a one-line lookup table already captures it —
+      there is little left for any model to learn. That's the motivation for reframing the
+      problem as **anomaly early warning on normalised flows** in `02_anomaly_early_warning.py`.
     - **Latency**: XGBoost predicts in milliseconds, local, no network. TabPFN-3.5 pays a
       network round trip per call (seconds), largely independent of batch size — so an agent
       that needs an instant answer for a dashboard tile should prefer XGBoost; one that needs

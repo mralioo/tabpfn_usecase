@@ -22,9 +22,9 @@ def _(mo):
 
     Before asking *any* model a question, this notebook looks at what the raw files
     actually contain: shapes, missing values, duplicates, timestamp coverage, and the
-    basic distributions that later notebooks assume. Every other notebook in this folder
-    (`01_demand_forecasting_and_overcrowding.py`, `02_closure_impact_and_network_resilience.py`,
-    `03_energy_consumption_forecasting.py`) builds on the same loaders used here —
+    basic distributions that later notebooks assume. The other notebooks in this folder
+    (`01_demand_forecasting_and_overcrowding.py`, `02_anomaly_early_warning.py`) build on
+    the same loaders used here —
     `tabpfn_lab.datasets.berlin` — so a data problem caught here is a problem avoided
     everywhere downstream.
 
@@ -297,20 +297,15 @@ def _(mo):
     mo.md(r"""
     ## 5. What this says about usable questions
 
-    Given what's actually in these files, three distinct modelling use cases are
-    well-supported (each gets its own notebook):
+    Given what's actually in these files, the modelling path runs through two notebooks:
 
-    1. **Passenger demand / overcrowding** (`01_demand_forecasting_and_overcrowding.py`) —
-       the richest signal: real weather + real events + simulated closures, all joined to a
-       clean 15-min flow table. Two targets, one feature row, as the MCP server already does.
-    2. **Closure / disruption impact** (`02_closure_impact_and_network_resilience.py`) — the
-       real connection graph plus the simulated closure log gives a genuine what-if surface:
-       which stations are reachable-only-through a given one (articulation points), and how
-       much flow redistributes nearby.
-    3. **Energy consumption forecasting** (`03_energy_consumption_forecasting.py`) — unused
-       anywhere else in this repo until now. Daily, per-line, plausibly driven by ridership
-       and weather — a regression task at a completely different granularity (daily vs
-       15-min) than the other two, worth checking whether that changes which model wins.
+    1. **Why the obvious framing fails** (`01_demand_forecasting_and_overcrowding.py`) —
+       "overcrowded = flow ≥ the station's own P90" on the joined 15-min table (real weather
+       + real events + simulated closures). That target is mostly the daily clock, so a
+       station × weekend × hour lookup table already ties TabPFN-3.5.
+    2. **The refined use case: anomaly early warning** (`02_anomaly_early_warning.py`) —
+       normalise each station's flow against what's expected for that station and time, and
+       predict *deviations* from normal rather than raw volume.
 
     What's **not** well-supported by this data: anything needing ground-truth capacity
     figures (no platform-capacity column exists — "overcrowded" is defined relative to a

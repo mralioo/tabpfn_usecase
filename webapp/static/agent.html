@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Control-Room Agent</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* layout: single centred column — question bar, then answer cards; each card = answer text, evidence charts (grid), tool trace */
+:root{
+  --bg:#0b0f14; --bg-elev:#121821; --surface:#171f2b; --surface-2:#1e283a;
+  --border:#2a3547; --fg:#e8edf3; --fg-muted:#8a96a8; --fg-faint:#5c6a7e;
+  --accent:#5fc3e4; --accent-dim:#2c5a6c;
+  --good:#0ca30c; --warn:#fab219; --danger:#d03b3b;
+  --m-tabpfn:#3987e5; --m-xgb_full:#d95926; --m-xgb_small:#199e70; --m-xgb_profile:#c98500; --m-profile:#8a8984;
+  --z-neg:#3987e5; --z-mid:#383835; --z-pos:#e66767;
+  --ink:#e8edf3; --obs:#a3a29b; --grid:rgba(138,150,168,.14);
+  --mono:'IBM Plex Mono',ui-monospace,monospace; --sans:'IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --bg:#eef1f4; --bg-elev:#ffffff; --surface:#ffffff; --surface-2:#f2f5f8;
+    --border:#d7dee6; --fg:#121823; --fg-muted:#56657a; --fg-faint:#8795a8;
+    --accent:#1b7fa3; --accent-dim:#cfe8f0;
+    --m-tabpfn:#2a78d6; --m-xgb_full:#eb6834; --m-xgb_small:#1baf7a; --m-xgb_profile:#eda100; --m-profile:#8a8984;
+    --z-neg:#2a78d6; --z-mid:#f0efec; --z-pos:#e34948;
+    --ink:#121823; --obs:#6f6e69; --grid:rgba(86,101,122,.13);
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#eef1f4; --bg-elev:#ffffff; --surface:#ffffff; --surface-2:#f2f5f8;
+  --border:#d7dee6; --fg:#121823; --fg-muted:#56657a; --fg-faint:#8795a8;
+  --accent:#1b7fa3; --accent-dim:#cfe8f0;
+  --m-tabpfn:#2a78d6; --m-xgb_full:#eb6834; --m-xgb_small:#1baf7a; --m-xgb_profile:#eda100; --m-profile:#8a8984;
+  --z-neg:#2a78d6; --z-mid:#f0efec; --z-pos:#e34948;
+  --ink:#121823; --obs:#6f6e69; --grid:rgba(86,101,122,.13);
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);margin:0;font-size:13.5px;line-height:1.5}
+button,input{font-family:inherit;font-size:inherit;color:inherit}
+.topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;background:var(--bg-elev);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.brand small{display:block;font-weight:400;color:var(--fg-muted);font-size:11px}
+.navlink{margin-left:auto;color:var(--accent);text-decoration:none;font-weight:500;padding:5px 9px;border:1px solid var(--border);border-radius:7px}
+.navlink:hover{border-color:var(--accent)}
+.wrap{max-width:1180px;margin:0 auto;padding:16px}
+.intro{color:var(--fg-muted);font-size:12.5px;margin:0 0 4px}
+.pipeline{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 12px;font-size:12px}
+.pipeline span{font-family:var(--mono);padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface)}
+.pipeline i{color:var(--fg-faint);font-style:normal}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
+.presets button{border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:5px 11px;font-size:12px;cursor:pointer;text-align:left}
+.presets button:hover{border-color:var(--accent)}
+.ask-row{display:flex;gap:8px;position:sticky;top:52px;z-index:10;background:var(--bg);padding:6px 0}
+.ask-row input{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;outline:none}
+.ask-row input:focus{border-color:var(--accent)}
+.btn{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600}
+.btn:hover{border-color:var(--accent)}
+.thread{display:flex;flex-direction:column;gap:16px;margin-top:10px}
+.q{align-self:flex-end;background:var(--accent-dim);border-radius:12px 12px 3px 12px;padding:8px 12px;max-width:80%}
+.card{background:var(--bg-elev);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.answer p{margin:4px 0} .answer ul{margin:4px 0;padding-left:20px} .answer li{margin:2px 0}
+.answer code{font-family:var(--mono);font-size:12px}
+.ev-h{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg-muted);font-weight:600}
+.evidence{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:12px}
+.chart{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 10px;position:relative;min-width:0}
+.chart h4{margin:0;font-size:12.5px;font-weight:600}
+.chart .cap{font-size:11.5px;color:var(--fg-muted);margin:1px 0 4px}
+.chart svg{width:100%;height:240px;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--fg-muted)}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+.tip{position:absolute;pointer-events:none;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:11.5px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:5;display:none;min-width:170px}
+.tip .row{display:flex;justify-content:space-between;gap:12px}
+.tip .row span:last-child{font-family:var(--mono)}
+table.t{width:100%;border-collapse:collapse;font-size:12px}
+table.t th{text-align:left;color:var(--fg-muted);font-weight:500;padding:4px 6px;border-bottom:1px solid var(--border)}
+table.t td{padding:4px 6px;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums}
+.trace{margin-top:12px;border-top:1px dashed var(--border);padding-top:8px}
+.trace details{font-size:12px;color:var(--fg-muted);margin:2px 0}
+.trace summary{cursor:pointer;font-family:var(--mono)}
+.trace pre{white-space:pre-wrap;word-break:break-word;background:var(--surface-2);padding:6px 8px;border-radius:6px;font-size:11px;max-height:220px;overflow:auto}
+.meta{font-size:11.5px;color:var(--fg-muted)}
+.thinking{color:var(--warn);display:flex;align-items:center;gap:8px}
+.spin{width:11px;height:11px;border-radius:50%;border:2px solid var(--warn);border-top-color:transparent;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{color:var(--danger)}
+
+/* page tabs + guide button — same on both pages */
+.pagetabs{display:flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--surface)}
+.pagetabs a{display:flex;align-items:center;gap:7px;padding:7px 14px;color:var(--fg-muted);text-decoration:none;font-weight:600;font-size:13px}
+.pagetabs a:hover{color:var(--fg)}
+.pagetabs a[aria-current="page"]{background:var(--accent);color:#06131a}
+.pagetabs .n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;border:1.5px solid currentColor;font-size:10.5px}
+.guide-btn{border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:9px;padding:7px 12px;font-weight:600;cursor:pointer}
+.guide-btn:hover{background:var(--accent-dim)}
+</style>
+<script src="/static/tour.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="dot"></span><div>Control-Room Agent<small>Berlin U-Bahn · ask in plain language, get TabPFN-3.5 numbers, charts and an action</small></div></div>
+  <nav class="pagetabs" aria-label="Pages" style="margin-left:auto"><a href="/"><span class="n">1</span>Early-Warning Desk</a><a href="/agent" aria-current="page"><span class="n">2</span>Control-Room Agent</a></nav>
+  <button class="guide-btn" id="guide-btn" title="Guided walkthrough of this page">? Guide</button>
+</header>
+<main class="wrap">
+  <p class="intro">The agent picks MCP tools (network outlook, line corridor, station forecast, explain, what-if, scenarios,
+    scoreboard). The tools run the TabPFN-3.5 engine, and the answer is written from the returned numbers only.
+    Under every answer, <b>Evidence</b> charts the exact tool results the answer and its recommended action rest on, and the
+    tool trace shows every call.</p>
+  <div class="pipeline"><span>operator question</span><i>→</i><span>LLM (LiteLLM)</span><i>→</i><span>MCP tools</span><i>→</i><span>TabPFN-3.5</span><i>→</i><span>answer + evidence</span></div>
+  <div class="presets" id="presets"></div>
+  <form class="ask-row" id="ask-form"><input id="ask-input" placeholder="e.g. What should we watch on 28 Sep at 22:00?" autocomplete="off" aria-label="Question"><button class="btn" type="submit">Ask</button></form>
+  <div class="thread" id="thread"></div>
+</main>
+
+<script>
+const SVGNS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtInt = n => n == null ? "—" : Math.round(n).toLocaleString("en-US");
+const pct = v => v == null ? "—" : Math.round(v * 100) + "%";
+const shortSt = n => String(n || "").replace(/^(S\+U|U) /, "").replace(" (Berlin)", "");
+const hhmm = iso => { const d = new Date(iso); return d.toLocaleTimeString("en-GB", {hour: "2-digit", minute: "2-digit"}); };
+const dayHour = iso => { const d = new Date(iso); return d.toLocaleString("en-GB", {weekday: "short", day: "2-digit", hour: "2-digit", minute: "2-digit"}); };
+const MODEL_VAR = {"TabPFN-3.5 (10k context)": "--m-tabpfn", "XGBoost (full history)": "--m-xgb_full", "XGBoost (10k sample)": "--m-xgb_small",
+                   "XGBoost (profile only)": "--m-xgb_profile", "Profile baseline": "--m-profile"};
+const mcol = name => `var(${MODEL_VAR[name] || "--m-profile"})`;
+const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+
+const PRESETS = [
+  "What should the control room watch on Monday 28 September at 22:00?",
+  "A 3,000-person concert ends at Olympia-Stadion on 29 September at 22:00. What happens and what should we do?",
+  "Why was Warschauer Str. so busy on 28 September at 23:00?",
+  "If we close Kottbusser Tor on 29 September from 08:00 for 3 hours, what happens to it and its neighbours?",
+  "How does the load look along U1 on Monday 28 September at 23:00?",
+  "Forecast Warschauer Str. on 28 September from 18:00 for 7 hours.",
+  "Is TabPFN-3.5 better than XGBoost for this? Be honest.",
+];
+let history = null;
+
+/* ---------------------------------------------------------------- chart primitives */
+function chartBox(parent, title, caption){
+  const box = document.createElement("div"); box.className = "chart";
+  box.innerHTML = `<h4>${esc(title)}</h4>${caption ? `<div class="cap">${caption}</div>` : ""}`;
+  const svg = el("svg", {role: "img", "aria-label": title}); box.appendChild(svg);
+  const legend = document.createElement("div"); legend.className = "legend"; box.appendChild(legend);
+  const tip = document.createElement("div"); tip.className = "tip"; box.appendChild(tip);
+  parent.appendChild(box);
+  return {box, svg, legend, tip};
+}
+function onWidth(c, render){  // draw at the chart's real width, and again whenever that width changes
+  let last = 0;
+  new ResizeObserver(() => { const w = c.svg.clientWidth; if (w && Math.abs(w - last) > 2) { last = w; c.svg.innerHTML = ""; render(); } }).observe(c.box);
+}
+function legendHTML(items){ return items.map(([label, color, kind]) => `<span><span class="sw" style="background:${color};${kind === "line" ? "height:3px;vertical-align:3px" : ""}${kind === "dot" ? "border-radius:50%" : ""}"></span>${esc(label)}</span>`).join(""); }
+function showTip(c, e, html){
+  const box = c.box.getBoundingClientRect(); c.tip.innerHTML = html; c.tip.style.display = "block";
+  let x = e.clientX - box.left + 12; if (x + 200 > box.width) x -= 220; c.tip.style.left = x + "px"; c.tip.style.top = (e.clientY - box.top + 10) + "px";
+}
+function frame(c, H, lo, hi, fmt, pl = 50, pr = 10, pt = 10, pb = 48){
+  const W = c.svg.clientWidth || 520; c.svg.setAttribute("viewBox", `0 0 ${W} ${H}`); c.svg.style.height = H + "px";
+  const Y = v => pt + (H - pt - pb) * (1 - (v - lo) / (hi - lo || 1));
+  for (let t = 0; t <= 4; t++) { const v = lo + (hi - lo) * t / 4;
+    el("line", {x1: pl, x2: W - pr, y1: Y(v), y2: Y(v), stroke: "var(--grid)"}, c.svg);
+    el("text", {x: pl - 6, y: Y(v) + 3, "text-anchor": "end", "font-size": 10, fill: "var(--fg-faint)", "font-family": "IBM Plex Mono"}, c.svg).textContent = fmt(v); }
+  if (lo < 0 && hi > 0) el("line", {x1: pl, x2: W - pr, y1: Y(0), y2: Y(0), stroke: "var(--fg-faint)"}, c.svg);
+  return {W, H, pl, pr, pt, pb, Y};
+}
+function xLabel(c, f, x, text, rotate){
+  const t = el("text", {x, y: f.H - f.pb + 14, "font-size": 10, fill: "var(--fg-muted)", "font-family": "IBM Plex Sans",
+    "text-anchor": rotate ? "end" : "middle", transform: rotate ? `rotate(-40 ${x} ${f.H - f.pb + 14})` : ""}, c.svg);
+  t.textContent = text;
+}
+
+/* bars: cats[], series [{name,color,values}], refs [{name,color,values}] drawn as ticks, dots [{name,color,values}] */
+function bars(parent, {title, caption, cats, series, refs = [], dots = [], fmt = fmtInt, colorAt, rotate, H = 250, zeroFloor = true}){
+  const c = chartBox(parent, title, caption);
+  const all = [...series, ...refs, ...dots].flatMap(s => s.values).filter(v => v != null && isFinite(v));
+  let lo = zeroFloor ? Math.min(0, ...all) : Math.min(...all), hi = Math.max(...all, 0); if (hi === lo) hi = lo + 1;
+  hi += (hi - lo) * .08; if (lo < 0) lo -= (hi - lo) * .05;
+  c.legend.innerHTML = legendHTML([...series.map(s => [s.name, s.color]), ...refs.map(r => [r.name, r.color, "line"]), ...dots.map(d => [d.name, d.color, "dot"])]);
+  onWidth(c, () => {
+  const f = frame(c, H, lo, hi, fmt, 50, 10, 10, rotate ? 70 : 30);
+  const n = cats.length, gw = (f.W - f.pl - f.pr) / n, bw = Math.max(3, gw * .72 / series.length);
+  cats.forEach((cat, i) => {
+    const gx = f.pl + i * gw;
+    series.forEach((s, j) => { const v = s.values[i]; if (v == null) return;
+      const x = gx + gw * .14 + j * bw, y0 = f.Y(Math.max(lo, 0)), y = f.Y(v);
+      el("rect", {x, y: Math.min(y, y0), width: Math.max(2, bw - 2), height: Math.max(1, Math.abs(y0 - y)), rx: 3,
+        fill: colorAt ? colorAt(i, j, v) || s.color : s.color}, c.svg); });
+    refs.forEach(r => { const v = r.values[i]; if (v == null) return;
+      el("line", {x1: gx + gw * .08, x2: gx + gw * .92, y1: f.Y(v), y2: f.Y(v), stroke: r.color, "stroke-width": 2.5}, c.svg); });
+    dots.forEach(d => { const v = d.values[i]; if (v == null) return;
+      el("circle", {cx: gx + gw / 2, cy: f.Y(v), r: 4.5, fill: d.color, stroke: "var(--surface)", "stroke-width": 2}, c.svg); });
+    xLabel(c, f, gx + gw / 2, cat.length > 18 ? cat.slice(0, 17) + "…" : cat, rotate);
+    const hit = el("rect", {x: gx, y: f.pt, width: gw, height: f.H - f.pt - f.pb, fill: "transparent"}, c.svg);
+    hit.addEventListener("mousemove", e => showTip(c, e, `<b>${esc(cat)}</b>` + [...series, ...refs, ...dots].map(s =>
+      s.values[i] == null ? "" : `<div class="row"><span><span class="sw" style="background:${s.color}"></span>${esc(s.name)}</span><span>${fmt(s.values[i])}</span></div>`).join("")));
+    hit.addEventListener("mouseleave", () => c.tip.style.display = "none");
+  });
+  });
+  return c;
+}
+
+/* lines: xs labels, series [{name,color,values,dash,width}], dots, marks (bool[] for alarm triangles) */
+function lines(parent, {title, caption, xs, series, dots = [], marks, markLabel, markColor = "var(--danger)", fmt = fmtInt, H = 250, yMin}){
+  const c = chartBox(parent, title, caption);
+  const all = [...series, ...dots].flatMap(s => s.values).filter(v => v != null && isFinite(v));
+  let lo = yMin ?? Math.min(...all), hi = Math.max(...all); if (hi === lo) hi = lo + 1; hi += (hi - lo) * .1;
+  c.legend.innerHTML = legendHTML([...series.map(s => [s.name, s.color, "line"]), ...dots.map(d => [d.name, d.color, "dot"])])
+    + (marks && marks.some(Boolean) ? `<span style="color:var(--fg)">▼ ${esc(markLabel)}</span>` : "");
+  onWidth(c, () => {
+  const f = frame(c, H, lo, hi, fmt, 50, 12, 16, 30);
+  const n = xs.length, X = i => f.pl + (n === 1 ? (f.W - f.pl - f.pr) / 2 : i * (f.W - f.pl - f.pr) / (n - 1));
+  series.forEach(s => { let d = "", pen = false;
+    s.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + X(i).toFixed(1) + "," + f.Y(v).toFixed(1); pen = true; });
+    el("path", {d, fill: "none", stroke: s.color, "stroke-width": s.width || 2.2, "stroke-dasharray": s.dash || "", "stroke-linejoin": "round"}, c.svg);
+    s.values.forEach((v, i) => { if (v != null) el("circle", {cx: X(i), cy: f.Y(v), r: 3.5, fill: s.color}, c.svg); }); });
+  dots.forEach(d => d.values.forEach((v, i) => { if (v != null) el("circle", {cx: X(i), cy: f.Y(v), r: 5, fill: d.color, stroke: "var(--surface)", "stroke-width": 2}, c.svg); }));
+  if (marks) marks.forEach((m, i) => { if (m) el("path", {d: `M${X(i) - 6},${f.pt - 8} L${X(i) + 6},${f.pt - 8} L${X(i)},${f.pt + 2} Z`, fill: markColor}, c.svg); });
+  const step = Math.max(1, Math.ceil(n / 8));
+  xs.forEach((x, i) => { if (i % step === 0 || i === n - 1) xLabel(c, f, X(i), x); });
+  const cross = el("line", {y1: f.pt, y2: f.H - f.pb, stroke: "var(--fg-faint)", opacity: 0}, c.svg);
+  const hit = el("rect", {x: f.pl, y: f.pt, width: f.W - f.pl - f.pr, height: f.H - f.pt - f.pb, fill: "transparent"}, c.svg);
+  hit.addEventListener("mousemove", e => { const r = c.svg.getBoundingClientRect(), mx = (e.clientX - r.left) * f.W / r.width;
+    const i = Math.max(0, Math.min(n - 1, Math.round((mx - f.pl) / ((f.W - f.pl - f.pr) / Math.max(1, n - 1)))));
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("opacity", 1);
+    showTip(c, e, `<b>${esc(xs[i])}</b>` + [...series, ...dots].map(s => s.values[i] == null ? "" :
+      `<div class="row"><span><span class="sw" style="background:${s.color}"></span>${esc(s.name)}</span><span>${fmt(s.values[i])}</span></div>`).join("")
+      + (marks && marks[i] ? `<div class="row"><span>${esc(markLabel)}</span><span>▼</span></div>` : "")); });
+  hit.addEventListener("mouseleave", () => { c.tip.style.display = "none"; cross.setAttribute("opacity", 0); });
+  });
+  return c;
+}
+
+function table(parent, title, caption, head, rows){
+  const box = document.createElement("div"); box.className = "chart";
+  box.innerHTML = `<h4>${esc(title)}</h4>${caption ? `<div class="cap">${caption}</div>` : ""}<table class="t"><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${v}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  parent.appendChild(box);
+}
+
+/* ---------------------------------------------------------------- evidence per tool */
+const NORMAL = "var(--ink)", OBS = "var(--obs)", TAB = "var(--m-tabpfn)", WHATIF = "var(--z-pos)";
+const EVIDENCE = {
+  what_if(r, g){
+    const focus = r.hours.filter(h => h.station === r.station);
+    lines(g, {title: `${r.station} — as scheduled vs what-if`, caption: `${esc(r.scenario)} · ${esc(r.inference.engine)}`,
+      xs: focus.map(h => hhmm(h.hour)), series: [
+        {name: "normal for the hour", color: NORMAL, values: focus.map(h => h.normal_passengers), dash: "5 4", width: 1.8},
+        {name: "TabPFN-3.5 as scheduled", color: TAB, values: focus.map(h => h.as_scheduled.forecast_passengers)},
+        {name: "TabPFN-3.5 what-if", color: WHATIF, values: focus.map(h => h.what_if.forecast_passengers)}],
+      marks: focus.map(h => h.what_if.alarm), markLabel: "surge alarm in the what-if", yMin: 0});
+    bars(g, {title: "Surge probability per hour", caption: `alarm threshold ${pct(r.alarm_threshold)} (the model's top 2% of station-hours)`,
+      cats: focus.map(h => hhmm(h.hour)), series: [
+        {name: "as scheduled", color: TAB, values: focus.map(h => h.as_scheduled.surge_probability)},
+        {name: "what-if", color: WHATIF, values: focus.map(h => h.what_if.surge_probability)}],
+      refs: [{name: "alarm threshold", color: "var(--danger)", values: focus.map(() => r.alarm_threshold)}], fmt: pct});
+    if (r.neighbours_peak_change && r.neighbours_peak_change.length) bars(g, {title: "Neighbouring stations — biggest change",
+      caption: "scored in the same TabPFN-3.5 call; the simulated data has no spill-over, so small changes are expected",
+      cats: r.neighbours_peak_change.map(n => `${shortSt(n.station)} ${hhmm(n.hour)}`), series: [
+        {name: "as scheduled", color: TAB, values: r.neighbours_peak_change.map(n => n.as_scheduled_passengers)},
+        {name: "what-if", color: WHATIF, values: r.neighbours_peak_change.map(n => n.what_if_passengers)}], rotate: true});
+  },
+  network_outlook(r, g){
+    bars(g, {title: `Load vs normal per line — ${dayHour(r.timestamp)}`, caption: `TabPFN-3.5 forecast summed along each line · network ${fmtInt(r.network.forecast_passengers)} vs ${fmtInt(r.network.normal_passengers)} normal · ${r.network.alarms} alarms`,
+      cats: r.lines.map(l => l.line), series: [{name: "forecast load vs normal", color: TAB, values: r.lines.map(l => l.load_vs_normal_pct)}],
+      colorAt: (i, j, v) => v >= 0 ? "var(--z-pos)" : "var(--z-neg)", fmt: v => (v >= 0 ? "+" : "") + Math.round(v) + "%"});
+    if (r.top_alarms.length) bars(g, {title: "Stations with a surge alarm", caption: r.top_alarms.map(a => `${esc(shortSt(a.station))}: ${esc(a.drivers.join(", "))}`).join(" · "),
+      cats: r.top_alarms.map(a => shortSt(a.station)), series: [{name: "TabPFN-3.5 forecast", color: WHATIF, values: r.top_alarms.map(a => a.forecast_passengers)}],
+      refs: [{name: "normal", color: NORMAL, values: r.top_alarms.map(a => a.normal_passengers)}],
+      dots: [{name: "observed (replay)", color: OBS, values: r.top_alarms.map(a => a.observed_replay.passengers)}], rotate: r.top_alarms.length > 4});
+  },
+  line_corridor(r, g){
+    bars(g, {title: `${r.line} corridor ${r.terminus_to_terminus.join(" → ")} — ${dayHour(r.timestamp)}`,
+      caption: `forecast ${fmtInt(r.forecast_passengers)} vs normal ${fmtInt(r.normal_passengers)} riders/h · red = surge alarm, blue-dark = closed`,
+      cats: r.stops.map(s => shortSt(s.station)), series: [{name: "TabPFN-3.5 forecast", color: TAB, values: r.stops.map(s => s.forecast_passengers)}],
+      refs: [{name: "normal", color: NORMAL, values: r.stops.map(s => s.normal_passengers)}],
+      dots: [{name: "observed (replay)", color: OBS, values: r.stops.map(s => s.observed_replay_passengers)}],
+      colorAt: i => r.stops[i].closed ? "var(--z-neg)" : r.stops[i].alarm ? "var(--z-pos)" : null, rotate: true, H: 280});
+  },
+  station_forecast(r, g){
+    const h = r.hours;
+    lines(g, {title: `${r.station} — hour by hour`, caption: `${esc(r.inference.engine)} · ${esc(r.window)}`,
+      xs: h.map(x => dayHour(x.hour)), series: [
+        {name: "normal", color: NORMAL, values: h.map(x => x.normal_passengers), dash: "5 4", width: 1.8},
+        {name: "TabPFN-3.5", color: TAB, values: h.map(x => x.tabpfn.forecast_passengers)},
+        {name: "XGBoost full history", color: "var(--m-xgb_full)", values: h.map(x => x.xgboost_full_history.forecast_passengers), width: 1.6}],
+      dots: [{name: "observed (replay)", color: OBS, values: h.map(x => x.observed_replay.passengers)}],
+      marks: h.map(x => x.tabpfn.alarm), markLabel: "TabPFN-3.5 surge alarm", yMin: 0});
+    bars(g, {title: "TabPFN-3.5 surge probability", caption: h.map(x => x.drivers.join(", ")).filter((v, i, a) => a.indexOf(v) === i).join(" · "),
+      cats: h.map(x => hhmm(x.hour)), series: [{name: "surge probability", color: TAB, values: h.map(x => x.tabpfn.surge_probability)}],
+      colorAt: i => h[i].tabpfn.alarm ? "var(--z-pos)" : null, fmt: pct});
+  },
+  explain_anomaly(r, g){
+    const names = Object.keys(r.models);
+    bars(g, {title: `${r.station} at ${dayHour(r.hour)} — every model's forecast`, caption: `drivers: ${esc(r.drivers.join(", "))}`,
+      cats: names.map(n => n.replace(" (10k context)", "").replace("XGBoost ", "XGB ")), series: [{name: "forecast passengers", color: TAB, values: names.map(n => r.models[n].forecast_passengers)}],
+      refs: [{name: "normal", color: NORMAL, values: names.map(() => r.normal_passengers)}],
+      dots: [{name: "observed (replay)", color: OBS, values: names.map(() => r.observed_replay.passengers)}],
+      colorAt: i => mcol(names[i]), rotate: true});
+    const hist = r.same_station_history_in_training || {};
+    const rows = [["normal hours", "—", hist.normal_hours_mean_z]];
+    if (hist.past_event_egress_hours) rows.push(["past event-egress hours", hist.past_event_egress_hours.n, hist.past_event_egress_hours.mean_z]);
+    if (hist.past_closed_hours) rows.push(["past closed hours", hist.past_closed_hours.n, hist.past_closed_hours.mean_z]);
+    rows.push(["this hour (observed)", 1, r.observed_replay.z]);
+    bars(g, {title: "Same station in training — how unusual is this?", caption: "mean anomaly z; |z| ≥ 2 is a surge or a collapse",
+      cats: rows.map(x => x[0]), series: [{name: "mean z", color: TAB, values: rows.map(x => x[2])}],
+      colorAt: (i, j, v) => v >= 2 ? "var(--z-pos)" : v <= -2 ? "var(--z-neg)" : null, fmt: v => (v >= 0 ? "+" : "") + v.toFixed(1)});
+  },
+  model_scoreboard(r, g){
+    const names = Object.keys(r.pooled);
+    const cats = names.map(n => n.replace(" (10k context)", " 10k").replace("XGBoost ", "XGB "));
+    bars(g, {title: "PR-AUC for surge hours (both test windows pooled)", caption: (r.key_findings || [])[0] || "",
+      cats, series: [{name: "PR-AUC", color: TAB, values: names.map(n => r.pooled[n].pr_auc)}],
+      colorAt: i => mcol(names[i]), fmt: v => v.toFixed(3), rotate: true});
+    bars(g, {title: "Event surges caught in the 2% alarm budget", caption: (r.key_findings || [])[2] || "",
+      cats, series: [{name: "share of event surges caught", color: TAB, values: names.map(n => r.pooled[n].recall_event)}],
+      colorAt: i => mcol(names[i]), fmt: pct, rotate: true});
+    const c = chartBox(g, "How much history does XGBoost need?", esc((r.key_findings || [])[1] || "XGBoost PR-AUC vs training rows (log scale); diamonds = TabPFN-3.5 with its 10k-row context"));
+    c.legend.innerHTML = legendHTML([["XGBoost learning curve (solid: hold-out, dashed: backtest)", "var(--m-xgb_full)", "line"], ["TabPFN-3.5 10k context", TAB]]);
+    onWidth(c, () => {
+    const folds = Object.values(r.folds), pts = folds.flatMap(f => (f.xgboost_learning_curve || []).map(p => p.pr_auc));
+    const tabs = folds.map(f => f.models["TabPFN-3.5 (10k context)"]).filter(Boolean);
+    const lo = 0, hi = Math.max(...pts, ...tabs.map(t => t.pr_auc)) * 1.12;
+    const f = frame(c, 250, lo, hi, v => v.toFixed(2), 50, 12, 12, 32);
+    const xs = folds.flatMap(fd => (fd.xgboost_learning_curve || []).map(p => p.n_train)), xmin = Math.log10(Math.min(...xs) * .8), xmax = Math.log10(Math.max(...xs) * 1.1);
+    const X = n => f.pl + (Math.log10(n) - xmin) / (xmax - xmin) * (f.W - f.pl - f.pr);
+    [5e3, 1e4, 3e4, 1e5, 3e5].forEach(n => { if (Math.log10(n) >= xmin && Math.log10(n) <= xmax) xLabel(c, f, X(n), n >= 1e5 ? (n / 1e3) + "k" : (n / 1e3) + "k"); });
+    folds.forEach((fd, k) => { const curve = fd.xgboost_learning_curve || []; let d = "";
+      curve.forEach((p, i) => d += (i ? "L" : "M") + X(p.n_train).toFixed(1) + "," + f.Y(p.pr_auc).toFixed(1));
+      el("path", {d, fill: "none", stroke: "var(--m-xgb_full)", "stroke-width": 2.2, "stroke-dasharray": k ? "5 4" : ""}, c.svg);
+      curve.forEach(p => el("circle", {cx: X(p.n_train), cy: f.Y(p.pr_auc), r: 3.5, fill: "var(--m-xgb_full)"}, c.svg));
+      const t = fd.models["TabPFN-3.5 (10k context)"]; if (t) { const x = X(t.n_train), y = f.Y(t.pr_auc);
+        el("path", {d: `M${x},${y - 8} L${x + 8},${y} L${x},${y + 8} L${x - 8},${y} Z`, fill: TAB, stroke: "var(--surface)", "stroke-width": 2}, c.svg); } });
+    });
+  },
+  list_scenarios(r, g){
+    if (!r.length) return;
+    bars(g, {title: "Real incidents — observed anomaly", caption: "peak z at the station (|z| ≥ 2 = surge / collapse)",
+      cats: r.map(s => `${shortSt(s.station)} ${dayHour(s.peak_hour)}`), series: [{name: "observed peak z", color: TAB, values: r.map(s => s.observed_peak_z)}],
+      colorAt: (i, j, v) => v >= 0 ? "var(--z-pos)" : "var(--z-neg)", fmt: v => (v >= 0 ? "+" : "") + v.toFixed(1), rotate: true});
+    const models = Object.keys(r[0].flagged_by || {});
+    table(g, "Which models flagged them", "✓ = alarm (surge) or collapse forecast, with the first hour",
+      ["incident", ...models.map(m => m.replace(" (10k context)", "").replace("XGBoost ", "XGB "))],
+      r.map(s => [esc(s.title), ...models.map(m => s.flagged_by[m] ? `<span style="color:var(--good)">✓ ${hhmm(s.flagged_by[m])}</span>` : `<span style="color:var(--fg-faint)">–</span>`)]));
+  },
+};
+
+/* ---------------------------------------------------------------- conversation */
+function md(text){
+  const ls = esc(text).split("\n"); let html = "", list = false;
+  const inline = t => t.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*(?!\s)(.+?)\*/g, "$1<i>$2</i>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  for (const raw of ls) { const l = raw.trim();
+    if (/^([-*•]|\d+\.)\s+/.test(l)) { if (!list) { html += "<ul>"; list = true; } html += `<li>${inline(l.replace(/^([-*•]|\d+\.)\s+/, ""))}</li>`; }
+    else { if (list) { html += "</ul>"; list = false; } if (l) html += `<p>${inline(l.replace(/^#+\s*/, ""))}</p>`; } }
+  return html + (list ? "</ul>" : "");
+}
+
+async function ask(q){
+  const thread = $("thread");
+  thread.insertAdjacentHTML("beforeend", `<div class="q">${esc(q)}</div>`);
+  const card = document.createElement("div"); card.className = "card";
+  card.innerHTML = `<div class="thinking"><span class="spin"></span>agent is calling MCP tools… live TabPFN-3.5 calls take seconds</div>`;
+  thread.appendChild(card); card.scrollIntoView({behavior: "smooth", block: "end"});
+  try {
+    const r = await fetch("/api/agent/ask", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question: q, history})});
+    const out = await r.json(); if (!r.ok) throw new Error(out.error || "HTTP " + r.status);
+    history = out.history;
+    const tools = out.trace.filter(t => t.step === "tool");
+    card.innerHTML = `<div class="answer">${md(out.answer)}</div>`;
+    const withCharts = tools.filter(t => EVIDENCE[t.tool] && t.result && !t.result.error);
+    if (withCharts.length) {
+      card.insertAdjacentHTML("beforeend", `<div class="ev-h">Evidence — the tool results behind this answer</div>`);
+      const grid = document.createElement("div"); grid.className = "evidence"; card.appendChild(grid);
+      for (const t of withCharts) { try { EVIDENCE[t.tool](t.result, grid); } catch (e) { console.error(t.tool, e); } }
+    }
+    card.insertAdjacentHTML("beforeend", `<div class="trace"><div class="meta">${tools.length} MCP tool call${tools.length === 1 ? "" : "s"} · ${esc(out.model)} · ${out.seconds.toFixed(1)} s total</div>` +
+      tools.map(t => `<details><summary>${esc(t.tool)}(${esc(Object.entries(t.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", "))}) · ${t.seconds.toFixed(2)} s</summary><pre>${esc(JSON.stringify(t.result ?? t.result_preview, null, 1))}</pre></details>`).join("") + `</div>`);
+  } catch (e) { card.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+$("presets").innerHTML = PRESETS.map((q, i) => `<button data-i="${i}">${esc(q)}</button>`).join("");
+$("presets").onclick = e => { const b = e.target.closest("button"); if (b) ask(PRESETS[+b.dataset.i]); };
+$("ask-form").onsubmit = e => { e.preventDefault(); const q = $("ask-input").value.trim(); if (q) { $("ask-input").value = ""; ask(q); } };
+
+/* ---------------------------------------------------------------- guided walkthrough (tour.js) */
+const AGENT_TOUR = [
+  {title: "The Control-Room Agent",
+   body: `<p>Ask about the U-Bahn in plain language. Behind the scenes:</p>
+     <ul><li>an <b>LLM</b> (any LiteLLM model) decides which tools to call,</li><li>the tools are an <b>MCP server</b> over the TabPFN-3.5 engine,</li>
+     <li><b>TabPFN-3.5</b> computes the forecast, live via the API for what-ifs and station forecasts.</li></ul><p>The answer may only use numbers the tools returned.</p>`},
+  {sel: ".pipeline", title: "The pipeline", body: `<p>Question → LLM → MCP tools → TabPFN-3.5 → answer + evidence. Every step is visible in the result card.</p>`},
+  {sel: "#presets", title: "Start with a preset",
+   body: `<ul><li><b>Network outlook</b>: what to watch at a given hour.</li><li><b>What-if</b>: a concert or a closure that is not in the calendar (live TabPFN-3.5).</li>
+     <li><b>Why</b>: explain a past surge.</li><li><b>Line corridor</b>: load along U1.</li><li><b>Honest model comparison</b>.</li></ul>`},
+  {sel: "#ask-form", title: "Or ask your own question",
+   body: `<p>Use dates between <b>Sep 1 and Sep 30 2026</b>, Berlin time, with service hours 05:00–00:00. Informal station names work ("Kotti", "Alex").</p>`},
+  {sel: "#thread .card", title: "Read the answer",
+   body: `<ul><li><b>Bold headline</b>: the forecast. Bullets: drivers and what was observed. <b>Action</b>: what to do.</li>
+     <li><b>Evidence</b>: charts of the exact tool results (hover for values).</li><li><b>Tool trace</b>: every MCP call with its arguments, time and raw result.</li></ul>`,
+   before: () => { if (!document.querySelector("#thread .card")) ask(PRESETS[1]); }},  // not awaited: the spotlight follows the card as the answer arrives
+  {sel: ".pagetabs a[href='/']", title: "Back to the desk", body: `<p>The <b>Early-Warning Desk</b> shows the same forecasts on the map, the timeline and the line corridor.</p>`},
+];
+$("guide-btn").onclick = () => Tour.start(AGENT_TOUR);
+const q0 = new URLSearchParams(location.search).get("q");  // demo links: /agent?q=question
+if (q0) ask(q0); else Tour.autoStart(AGENT_TOUR, "agent");
+</script>
+</body>
+</html>

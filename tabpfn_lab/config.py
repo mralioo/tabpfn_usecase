@@ -10,7 +10,6 @@ RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", REPO_ROOT / "results"))
 
 # `data/` holds one subfolder per dataset (see tabpfn_lab/datasets/ — one loader module each):
 BERLIN_DATA_DIR = Path(os.environ.get("BERLIN_DATA_DIR", DATA_DIR / "Berlin_Ubahn_Alstom_data"))
-FINNISH_DATA_DIR = Path(os.environ.get("FINNISH_DATA_DIR", DATA_DIR / "Finnish_Railway_Operations_data"))
 # Deutsche Bahn data is fetched on demand from Hugging Face (tabpfn_lab/datasets/deutsche_bahn.py)
 # rather than stored locally; DB_DATA_DIR is reserved for an optional local cache/mirror.
 DB_DATA_DIR = Path(os.environ.get("DB_DATA_DIR", DATA_DIR / "DB_data"))

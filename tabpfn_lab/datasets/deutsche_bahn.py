@@ -1,7 +1,7 @@
 """A large, real, same-topic railway dataset: Deutsche Bahn (German national rail) per-stop
 delay records, for the bigger/harder benchmark this repo's README explains the need for (the
 Berlin U-Bahn data alone is too periodic to prove anything against a baseline — see
-`tabpfn_lab/baselines.py`).
+`notebooks/01_demand_forecasting_and_overcrowding.py`).
 
 Source: **piebro/deutsche-bahn-data** on Hugging Face
 (https://huggingface.co/datasets/piebro/deutsche-bahn-data, project page
