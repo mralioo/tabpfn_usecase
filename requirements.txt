@@ -9,21 +9,20 @@ tabpfn-client>=0.2
 # Baseline for the benchmark (a real tuned model, not a naive heuristic)
 xgboost>=2.0
 
-# Big-data railway benchmarks (tabpfn_lab/datasets/deutsche_bahn.py, finnish.py)
+# Supporting big-data benchmark (tabpfn_lab/datasets/deutsche_bahn.py)
 huggingface-hub>=0.20
 pyarrow>=14.0
 
-# MCP server + agent harness
+# MCP server + control-room agent (any LiteLLM-supported LLM)
 fastmcp>=2.0
 litellm>=1.40
 
-# Dashboard (Streamlit — dataset exploration, live prediction, both benchmarks)
-streamlit>=1.35
+# Network topology (line order, neighbours, closures resolved on the graph)
+networkx>=3.0
+# Charts in the notebooks
 plotly>=5.20
-networkx>=3.0   # Berlin network-topology exploration (articulation points, betweenness)
 
-# Closure Impact Lab (webapp/ — Starlette + uvicorn; already pulled in by fastmcp/streamlit
-# above, pinned explicitly here since webapp/server.py imports them directly)
+# Early-Warning Desk webapp (webapp/ — Starlette + uvicorn, no build step)
 starlette>=1.0
 uvicorn>=0.30
 
