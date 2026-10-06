@@ -57,6 +57,8 @@ button,select,input{font-family:inherit;font-size:inherit;color:inherit}
 .app{display:grid;grid-template-columns:minmax(0,1fr) 410px;grid-template-rows:auto minmax(420px,1fr) auto;
   grid-template-areas:"top top" "map rail" "detail rail";min-height:100dvh}
 @media (max-width:1100px){.app{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "map" "detail" "rail";grid-template-rows:auto auto auto auto}}
+.corridor-box{margin-top:12px}
+.corridor-box svg{height:190px}
 
 /* top bar */
 .topbar{grid-area:top;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;background:var(--bg-elev);border-bottom:1px solid var(--border)}
@@ -174,7 +176,17 @@ details.method{font-size:11.5px;color:var(--fg-muted)}
   .tl-head span:last-child{margin-left:0!important}
 }
 details.method summary{cursor:pointer;color:var(--fg);font-weight:500}
+
+/* page tabs + guide button — same on both pages */
+.pagetabs{display:flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--surface)}
+.pagetabs a{display:flex;align-items:center;gap:7px;padding:7px 14px;color:var(--fg-muted);text-decoration:none;font-weight:600;font-size:13px}
+.pagetabs a:hover{color:var(--fg)}
+.pagetabs a[aria-current="page"]{background:var(--accent);color:#06131a}
+.pagetabs .n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;border:1.5px solid currentColor;font-size:10.5px}
+.guide-btn{border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:9px;padding:7px 12px;font-weight:600;cursor:pointer}
+.guide-btn:hover{background:var(--accent-dim)}
 </style>
+<script src="/static/tour.js"></script>
 </head>
 <body>
 <div class="app" id="app">
@@ -190,7 +202,8 @@ details.method summary{cursor:pointer;color:var(--fg);font-weight:500}
         <button data-mode="forecast" aria-pressed="true">Forecast z</button>
         <button data-mode="actual" aria-pressed="false">Actual z</button>
       </div>
-      <a class="navlink" href="/closures">Closure Impact Lab →</a>
+      <nav class="pagetabs" aria-label="Pages"><a href="/" aria-current="page"><span class="n">1</span>Early-Warning Desk</a><a href="/agent"><span class="n">2</span>Control-Room Agent</a></nav>
+      <button class="guide-btn" id="guide-btn" title="Guided walkthrough of this page">? Guide</button>
     </div>
   </header>
 
@@ -230,20 +243,29 @@ details.method summary{cursor:pointer;color:var(--fg);font-weight:500}
       <div class="chart-box"><h4>Flow vs normal</h4><svg id="chart-flow"></svg><div class="chart-legend" id="lg-flow"></div><div class="tip" id="tip-flow"></div></div>
       <div class="chart-box"><h4>Anomaly z — actual vs forecast</h4><svg id="chart-z"></svg><div class="chart-legend" id="lg-z"></div><div class="tip" id="tip-z"></div></div>
     </div>
+    <div class="chart-box corridor-box">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h4 style="margin:0">Line corridor · forecast load along the line (TabPFN-3.5) vs normal, selected hour</h4>
+        <select id="line-sel" aria-label="Line"></select>
+        <span class="sub" id="corr-sub"></span>
+      </div>
+      <svg id="chart-corr"></svg><div class="chart-legend" id="lg-corr"></div><div class="tip" id="tip-corr"></div>
+    </div>
   </section>
 
+
   <aside class="rail">
-    <div class="sec">
+    <div class="sec" id="score-sec">
       <div class="sec-h"><h2>Model scoreboard</h2><span class="hint" id="score-hint"></span></div>
       <div class="score-wrap"><table class="score" id="score"></table></div>
       <div class="note" id="score-note"></div>
     </div>
-    <div class="sec">
+    <div class="sec" id="scen-sec">
       <div class="sec-h"><h2>Scenarios</h2><span class="hint">sorted by size of the actual anomaly</span></div>
       <div class="chips" id="kind-chips" style="margin-bottom:7px"></div>
       <div class="scen-list" id="scen-list"></div>
     </div>
-    <div class="sec">
+    <div class="sec" id="feed-sec">
       <div class="sec-h"><h2>Alarm feed · this hour</h2><span class="hint" id="feed-hint"></span></div>
       <div class="feed" id="feed"></div>
     </div>
@@ -258,7 +280,7 @@ details.method summary{cursor:pointer;color:var(--fg);font-weight:500}
         <p>Windows: <b>Alstom hold-out</b> = the provided <code>*_rest</code> files (Sep 22–30, InnoTrans week);
         <b>Backtest</b> = Sep 1–21 trained on data before Sep 1. Data is Alstom-simulated; many |z| ≥ 2 hours are noise
         with no driver, which caps precision for every model. Engine: <code>tabpfn_lab/anomaly.py</code>, notebook
-        <code>notebooks/04_anomaly_early_warning.py</code>.</p>
+        <code>notebooks/02_anomaly_early_warning.py</code>.</p>
       </details>
     </div>
   </aside>
@@ -319,11 +341,15 @@ async function boot(){
   $("next-btn").onclick = () => setHour(S.hourIdx + 1);
   document.addEventListener("keydown", e => { if (e.target.closest("input,select")) return;
     if (e.key === "ArrowRight") setHour(S.hourIdx + 1); if (e.key === "ArrowLeft") setHour(S.hourIdx - 1); });
+  $("line-sel").innerHTML = S.network.lines.map(l => `<option value="${l}">${l}</option>`).join("");
+  $("line-sel").onchange = loadCorridor;
   buildMap();
-  new ResizeObserver(() => { drawTimeline(); drawStationCharts(); }).observe($("detail"));
+  new ResizeObserver(() => { drawTimeline(); drawStationCharts(); drawCorridor(); }).observe($("detail"));
   await setFold("holdout", true);
   const first = rankedScenarios().find(s => s.kind === "event" && s.peak.z > 0) || rankedScenarios()[0];
-  if (first) openScenario(first.id);
+  if (first) await openScenario(first.id);
+  const q = new URLSearchParams(location.search).get("q");  // old demo links: forward to the agent page
+  if (q) location.href = "/agent?q=" + encodeURIComponent(q);
 }
 
 function rankedScenarios(){
@@ -443,11 +469,11 @@ function renderScenarioCard(){
     ${verdicts ? `<div class="verdicts" aria-label="Which models flagged it"><span class="sub" style="align-self:center">${isDrop ? "Forecast z ≤ −2 (collapse) from:" : "Surge alarm (top 2%) from:"}</span>${verdicts}</div>` : ""}
     <div style="margin-top:9px;display:flex;align-items:center;flex-wrap:wrap">
       <button class="btn" id="live-btn">⚡ Re-score live with TabPFN-3.5</button>
-      <span class="live-note" id="live-note">${S.live ? liveNote(S.live) : "real API call · first call per window fits the 10k context (~5 s)"}</span>
+      <span class="live-note" id="live-note">${S.live ? liveNote(S.live) : "real API call · first call per window fits the 10k context (~5 s); API latency varies"}</span>
     </div></div>`;
   $("live-btn").onclick = runLive;
 }
-function liveNote(l){ return `live: ${l.n_rows} rows scored in ${l.total_s.toFixed(1)} s${l.fitted_now ? ` (incl. fit ${l.fit_s.toFixed(1)} s)` : ""} — dashed line in the z chart`; }
+function liveNote(l){ return `${esc(l.engine)}: ${l.rows_scored} rows scored in ${l.total_s.toFixed(1)} s — dashed line in the z chart`; }
 
 async function runLive(){
   const btn = $("live-btn"), note = $("live-note");
@@ -479,7 +505,7 @@ async function setHour(i, keepScenario){
     ["Rain", (tl.prcp[i] ?? 0).toFixed(1) + " mm"],
     ["Temp", (tl.temp[i] ?? 0).toFixed(0) + " °C"],
   ].map(([l,v]) => `<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${v}</div></div>`).join("");
-  paintMap(); renderFeed(); drawTimeline(); drawStationCharts();
+  paintMap(); renderFeed(); drawTimeline(); drawStationCharts(); loadCorridor();
 }
 
 function togglePlay(){ S.playing ? stopPlay() : startPlay(); }
@@ -609,7 +635,9 @@ async function loadStation(name, fromScenario){
   if (!fromScenario) { S.scenario = null; S.live = null; }
   const j = await getJSON(`/api/warning/station?fold=${S.fold}&station=${encodeURIComponent(name)}`);
   S.stationSeries = j.series;
-  paintMap(); drawStationCharts();
+  const st = S.network.stations.find(x => x.name === name);
+  if (st && !st.lines.includes($("line-sel").value)) $("line-sel").value = st.lines[0];
+  paintMap(); drawStationCharts(); loadCorridor();
 }
 
 function chartWindow(){
@@ -702,7 +730,91 @@ function lineChart(svg, tip, legend, o){
   legend.innerHTML = items.join("");
 }
 
-boot();
+/* ---------- line corridor ---------- */
+let corrData = null;
+async function loadCorridor(){
+  const ts = S.hours[S.hourIdx], line = $("line-sel").value;
+  if (!ts || !line) return;
+  try { corrData = await getJSON(`/api/warning/corridor?line=${line}&ts=${encodeURIComponent(ts)}`); } catch (e) { corrData = null; }
+  drawCorridor();
+}
+function drawCorridor(){
+  const svg = $("chart-corr"); svg.innerHTML = "";
+  if (!corrData || corrData.error) { $("corr-sub").textContent = corrData ? corrData.error : ""; return; }
+  const stops = corrData.stops, n = stops.length, W = svg.clientWidth || 800, H = 190, pl = 46, pr = 10, pt = 10, pb = 58;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const fc = corrData.forecast_passengers, nm = corrData.normal_passengers;
+  $("corr-sub").textContent = `${corrData.terminus_to_terminus.join(" → ")} · forecast ${fmtInt(fc)} vs normal ${fmtInt(nm)} riders/h (${fc >= nm ? "+" : "−"}${Math.abs(Math.round(100*(fc/Math.max(nm,1)-1)))}%)`;
+  const ymax = Math.max(10, ...stops.map(s => Math.max(s.forecast_passengers, s.normal_passengers, s.observed_replay_passengers)));
+  const bw = (W - pl - pr) / n, X = i => pl + i * bw, Y = v => pt + (H - pt - pb) * (1 - v / ymax);
+  for (let t = 0; t <= 3; t++) { const v = ymax * t / 3;
+    el("line", {x1: pl, x2: W - pr, y1: Y(v), y2: Y(v), stroke: "var(--grid)"}, svg);
+    el("text", {x: pl - 6, y: Y(v) + 3, "text-anchor": "end", "font-size": 10, fill: "var(--fg-faint)", "font-family": "IBM Plex Mono"}, svg).textContent = fmtInt(v); }
+  const lineColor = corrData.color || "var(--accent)";
+  el("line", {x1: pl, x2: W - pr, y1: H - pb + 6, y2: H - pb + 6, stroke: lineColor, "stroke-width": 4, "stroke-linecap": "round"}, svg);
+  stops.forEach((s, i) => {
+    const x = X(i) + bw * .18, w = Math.max(2, bw * .64);
+    el("rect", {x, y: Y(s.forecast_passengers), width: w, height: Math.max(1, Y(0) - Y(s.forecast_passengers)), rx: 2,
+      fill: s.closed ? "var(--z-neg)" : s.alarm ? "var(--z-pos)" : "var(--m-tabpfn)", opacity: .85}, svg);
+    el("line", {x1: X(i) + bw * .08, x2: X(i) + bw * .92, y1: Y(s.normal_passengers), y2: Y(s.normal_passengers), stroke: "var(--ink)", "stroke-width": 2}, svg);
+    el("circle", {cx: X(i) + bw/2, cy: H - pb + 6, r: 3.5, fill: "var(--bg-elev)", stroke: lineColor, "stroke-width": 2}, svg);
+    const lab = el("text", {x: X(i) + bw/2, y: H - pb + 16, "font-size": 9.5, fill: s.alarm ? "var(--fg)" : "var(--fg-muted)", "font-family": "IBM Plex Sans",
+      transform: `rotate(-50 ${X(i) + bw/2} ${H - pb + 16})`, "text-anchor": "end"}, svg);
+    lab.textContent = s.station.replace(/^(S\+U|U) /, "").slice(0, 16);
+    const hit = el("rect", {x: X(i), y: pt, width: bw, height: H - pt - pb + 12, fill: "transparent", style: "cursor:pointer"}, svg);
+    hit.addEventListener("mousemove", e => { const tip = $("tip-corr"), box = svg.parentElement.getBoundingClientRect();
+      tip.innerHTML = `<b>${esc(s.station)}</b><div class="row"><span>Forecast</span><span>${fmtInt(s.forecast_passengers)}</span></div>
+        <div class="row"><span>Normal</span><span>${fmtInt(s.normal_passengers)}</span></div><div class="row"><span>Forecast z</span><span>${fmtZ(s.forecast_z)}</span></div>
+        <div class="row"><span>Observed (replay)</span><span>${fmtInt(s.observed_replay_passengers)}</span></div>${s.alarm ? `<div class="row"><span>Alarm</span><span>raised</span></div>` : ""}${s.closed ? `<div class="row"><span>Status</span><span>closed</span></div>` : ""}`;
+      tip.style.display = "block"; let left = e.clientX - box.left + 12; if (left + 210 > box.width) left -= 230;
+      tip.style.left = left + "px"; tip.style.top = (e.clientY - box.top + 10) + "px"; });
+    hit.addEventListener("mouseleave", () => $("tip-corr").style.display = "none");
+    hit.addEventListener("click", () => { const st = S.network.stations.find(x => x.short === s.station); if (st) { S.scenario = null; $("scen-card-slot").innerHTML = ""; renderScenarios(); loadStation(st.name); } });
+  });
+  $("lg-corr").innerHTML = `<span><span class="sw" style="background:var(--m-tabpfn)"></span>forecast</span><span><span class="sw" style="background:var(--z-pos)"></span>forecast with surge alarm</span><span><span class="sw" style="background:var(--z-neg)"></span>closed</span><span><span class="sw" style="background:var(--ink);height:2px;vertical-align:3px"></span>normal for this hour</span>`;
+}
+
+
+/* ---------- guided walkthrough (tour.js) ---------- */
+const DESK_TOUR = [
+  {title: "Welcome to the U-Bahn Early-Warning Desk",
+   body: `<p>This desk replays the Berlin U-Bahn test weeks <b>hour by hour</b>, as the control room would have seen them a day ahead.</p>
+     <ul><li>Each station's flow is compared with its <b>normal</b> for that day type and hour.</li>
+     <li><b>z</b> = how far from normal: <b>z ≥ 2 = surge</b>, <b>z ≤ −2 = collapse</b>.</li>
+     <li>TabPFN-3.5 and the baselines forecast z from the event calendar, planned closures and the weather.</li></ul>
+     <p>Use <b>← →</b> or the buttons to move through this tour. Reopen it any time with <b>? Guide</b>.</p>`},
+  {sel: ".pagetabs", title: "Two pages",
+   body: `<p><b>1 · Early-Warning Desk</b> (this page): the network, the timeline, scenarios and model scores.</p><p><b>2 · Control-Room Agent</b>: ask in plain language; an LLM calls the TabPFN-3.5 tools over MCP and answers with charts.</p>`},
+  {sel: "#fold-seg", title: "Pick the test window",
+   body: `<p><b>Hold-out</b> = Alstom's own unseen files (Sep 22–30, InnoTrans week). <b>Backtest</b> = Sep 1–21, trained only on earlier data. Neither window was seen during training.</p>`},
+  {sel: "#model-sel", title: "Pick the model",
+   body: `<p>The map colours, alarm rings, alarm feed and timeline all follow this model. Compare <b>TabPFN-3.5 (10k context)</b> with XGBoost and the clock-only baseline.</p>`},
+  {sel: "#mode-seg", title: "Forecast or reality",
+   body: `<p><b>Forecast z</b> shows what the model predicted a day ahead. <b>Actual z</b> shows what happened. Flip between them to see where the forecast was right.</p>`},
+  {sel: "#map-stage", title: "The network map",
+   body: `<ul><li>Colour = anomaly: <span style="color:var(--z-pos)">red = busier</span>, <span style="color:var(--z-neg)">blue = emptier</span>, grey = normal.</li>
+     <li><b>Red ring</b> = surge alarm (the model's top 2% of station-hours).</li><li>Hover a station for numbers; <b>click</b> it to load its charts below.</li></ul>`},
+  {sel: ".timeline", title: "Move through time",
+   body: `<p>Blue bars = alarms per hour, white line = surges that really happened. <b>Click or drag</b> to jump to an hour, press <b>▶ Play</b>, or use the arrow keys. Spikes line up with concert evenings.</p>`},
+  {sel: "#score-sec", title: "Model scoreboard",
+   body: `<p>Honest comparison on this window: PR-AUC, the share of event surges caught, and closure collapses forecast.</p><p>With the <b>same 10k rows</b> TabPFN-3.5 beats XGBoost; XGBoost needs ~5× the data to catch up. Click a row to switch the model.</p>`},
+  {sel: "#scen-sec", title: "Real incidents — click one",
+   body: `<p>Concerts, station closures and rain spells, ranked by how unusual they really were. ✓ shows which models raised an alarm. Clicking one jumps the map, timeline and charts to it.</p>`},
+  {sel: "#scen-card-slot", title: "Scenario card",
+   body: `<p>The cause, the forecast in plain words, a suggested <b>action</b>, and each model's verdict.</p><p><b>⚡ Re-score live</b> makes a real TabPFN-3.5 API call (seconds) and draws it as a dashed line.</p>`,
+   before: async () => { if (!S.scenario) { const s = rankedScenarios().find(x => x.kind === "event" && x.peak.z > 0); if (s) await openScenario(s.id); } }},
+  {sel: ".charts", title: "Station detail",
+   body: `<p><b>Left</b>: actual flow vs normal vs the forecast. <b>Right</b>: actual z (bars) vs each model's forecast z (lines); ▼ marks hours where the selected model raised an alarm.</p>`},
+  {sel: ".corridor-box", title: "Line corridor — how load spreads along a line",
+   body: `<p>Every station of the chosen line in running order: forecast load (bars) vs normal (white ticks) for the selected hour. Scrub the timeline to watch pressure build and move along the line.</p>`},
+  {sel: "#feed-sec", title: "Alarm feed",
+   body: `<p>This hour's alarms with their drivers, and whether a surge really followed (✓). Click a row to open that station.</p>`},
+  {sel: ".pagetabs a[href='/agent']", title: "Next: ask the agent",
+   body: `<p>Open <b>2 · Control-Room Agent</b> to ask questions like <i>"A 3,000-person concert ends at Olympia-Stadion at 22:00 — what happens?"</i>. The answer comes from live TabPFN-3.5 calls, with charts as evidence.</p>`},
+];
+$("guide-btn").onclick = () => { stopPlay(); Tour.start(DESK_TOUR); };
+
+boot().then(() => Tour.autoStart(DESK_TOUR, "desk"));
 </script>
 </body>
 </html>
