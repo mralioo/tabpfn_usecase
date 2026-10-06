@@ -11,10 +11,64 @@ InnoTrans 2026 Berlin U-Bahn dataset (168 stations, 8 lines).
 > specialised model for predictions.* This repo is that hand-off, end to end: operator question → LLM →
 > MCP tool → TabPFN-3.5 → numbers + charts → recommended action.
 
-**Contents:** [Try it in 3 minutes](#try-it-in-3-minutes) · [The UI](#the-ui) ·
-[The use case](#the-use-case-forecast-the-anomaly-not-the-clock) · [Results](#results) ·
-[System design](#system-design) · [MCP tools](#mcp-tools) · [Notebooks](#notebooks) ·
-[Repository layout](#repository-layout) · [Data & license](#data-and-license)
+**Contents:** 
+- [Motivation](#motivation)
+- [Why TabPFN-3.5 for this use case](#why-tabpfn-35-for-this-use-case)
+- [Try it in 3 minutes](#try-it-in-3-minutes)
+- [The UI](#the-ui) 
+- [The use case](#the-use-case-forecast-the-anomaly-not-the-clock) 
+- [Results](#results) 
+- [A showcase, built to scale](#a-showcase-built-to-scale-next-test-larger-real-railway-data)
+- [System design](#system-design) 
+- [MCP tools](#mcp-tools) 
+- [Notebooks](#notebooks) 
+- [Repository layout](#repository-layout) 
+- [Data & license](#data-and-license)
+
+---
+
+## Motivation
+
+A metro control room sees the same rhythm every day: rush hours, a quiet midday, an evening peak, a night
+gap. The rhythm is easy. The hard part is **the hour that breaks it**: a concert lets out at 22:30 and
+3,000 people walk into one station, a station is shut for an inspection, a storm keeps people off their
+bikes. Today those moments are handled reactively. Staff notice the crowd when it is already on the
+platform.
+
+Three things make this hard to automate:
+
+- **The signal is rare.** Only about 2% of station-hours are real surges, and most of the "busy" hours are
+  just the clock. A model trained on raw flow learns the clock and calls it forecasting.
+- **Every situation is a small dataset.** One venue hosts a few big shows a month; a closure at a given
+  station happens a handful of times a year; a new station or a rebuilt line has no history at all.
+  There's never enough data to train a dedicated model for each.
+- **Operators need answers, not models.** A dispatcher asks "what happens if we close Kottbusser Tor at
+  08:00?", not "fit me a regressor". The prediction has to sit behind a question in plain language,
+  with evidence they can check.
+
+This project is about that gap: turn rare, context-driven disruptions into a **day-ahead early warning**,
+and make it usable by asking a question.
+
+## Why TabPFN-3.5 for this use case
+
+TabPFN-3.5 is a tabular foundation model. It was pre-trained on millions of synthetic prediction tasks and
+then learns a new task **in context**, from the rows you hand it at `.fit()` time, with no gradient
+training and no tuning. That matches what railway operations need, point for point:
+
+| Operator reality | What TabPFN-3.5 brings | Shown here |
+| --- | --- | --- |
+| Rare events, small samples per situation | Strong accuracy from small data, because the "training" is the pre-trained prior | With the **same 10k rows**, +31% PR-AUC and ~1.5× the event surges caught vs XGBoost; XGBoost needs **5–10× more rows** to match it |
+| New stations, venues, timetables, lines with no history | No training pipeline: hand it today's feature table and predict | One `.fit()` on a 10k-row context, ~5 s, refit in every process |
+| One feature table, many questions | The same table answers classification (surge yes/no) and regression (how many passengers) | `TabPFNClassifier` + `TabPFNRegressor` on the same features |
+| What-if questions nobody has data for yet | Scores any row you can describe, including counterfactual context | Live `what_if`: an extra concert, a closure (neighbours scored in the same call), rain |
+| Answers must be trusted and fast enough to act on | Probabilities you can rank by an alarm budget; seconds per request | Top-2% alarm rule; ~1–2 s per 1,000 station-hours over the API, fine for day-ahead plans |
+| Operators ask in language, not code | A model call fits naturally behind a tool | The 9-tool MCP server and the LLM agent with evidence charts |
+
+To be equally clear about the limit: when **months of clean, labelled history** exist for the exact same
+question, a trained gradient-boosted model can still win. Here, XGBoost on the full 28–35× larger history
+reaches PR-AUC 0.110 vs 0.089. The realistic deployment is **TabPFN-3.5 first**: on day one, for every new
+question, station or disruption type. Then a tuned GBM where history accumulates. Both read the same
+feature table.
 
 ---
 
@@ -145,10 +199,43 @@ emptier, than a normal 08:00**, and why, early enough to act.
   which caps precision for every model. Line suspensions barely move flow, and there is no spill-over to
   neighbouring stations; a real network would show both.
 
-**Supporting evidence on real data** (`make train-db`): on Deutsche Bahn delays
-([piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data), CC BY 4.0,
-June 2025, 1.5M stops), TabPFN-3.5 with 10k rows reaches ROC-AUC 0.734 vs 0.751 and MAE **4.64** vs 4.66 min
-for XGBoost trained on ~1.2M rows.
+## A showcase, built to scale: next test, larger real railway data
+
+The Berlin U-Bahn data is a **showcase**: real topology, real events and real weather, but **simulated**
+passenger flows and closures, over 16 weeks. It is the right sandbox to build the full loop (normalise →
+forecast anomalies → MCP → agent → operator UI) and to show the potential. It is not the ceiling. Two
+things limit what it can prove: the simulation adds noise with no driver (most |z| ≥ 2 hours), and it has
+no spill-over between neighbouring stations.
+
+**The same question already holds on large, real railway data.** `make train-db` runs TabPFN-3.5 against
+XGBoost on **Deutsche Bahn delay records** ([piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data),
+CC BY 4.0, June 2025, **1.5M real stop events**, 107 stations, S-Bahn to ICE). The cut-off is chronological
+(last days of June held out), and the test set has 5,000 rows:
+
+| Task | TabPFN-3.5 · 10k rows (0.8% of the data) | XGBoost · ~1.2M rows | |
+| --- | --- | --- | --- |
+| Delayed ≥ 5 min: ROC-AUC / PR-AUC | 0.734 / 0.488 | 0.751 / 0.504 | XGBoost +2% with 120× the data |
+| Delay in minutes: MAE / RMSE | **4.64** / 9.30 | 4.66 / 9.26 | same accuracy with 0.8% of the data |
+| Fit · predict 5k rows | 4.2 s · 2.7 s (API) | 5.7 s · 0.01 s (local) | XGBoost faster at inference |
+
+The pattern matches the U-Bahn result. With under 1% of the data and no tuning, TabPFN-3.5 lands within a
+few percent of a GBM trained on everything, and matches it on regression.
+
+**Where to take it next** (the code is already shaped for it):
+
+1. **Delay early warning on the DB data.** Apply the same recipe as here: a per-station × hour × weekday
+   normal for delays, an anomaly score, and context (weather, train type, upstream delays along the line).
+   Then forecast *unusual* delay cascades instead of average delay. The loader
+   (`tabpfn_lab/datasets/deutsche_bahn.py`) and benchmark (`evaluate_db.py`) are in place.
+2. **Propagation along the network.** Use upstream stations' forecasts as features downstream (the line
+   corridor turned into inputs), which real delay and crowd data support and the simulation does not.
+3. **More history, longer windows.** Several months of DB data (one parquet file per month) to rerun the
+   learning curve at real scale and find where in-context learning and a trained GBM cross over.
+4. **Same interfaces.** `operations.py` → MCP server → agent → UI stay unchanged; only the engine's feature
+   table changes. The agent would answer "which ICE connections at Hamburg Hbf will run late tomorrow
+   evening, and why?" the same way it answers about concerts at Warschauer Str. today.
+5. **Live operator data.** Swap the replay windows for a live feed (event calendar, planned works, weather
+   forecast) and score tomorrow every evening: 168 stations × 20 hours ≈ 3,400 rows, seconds of TabPFN-3.5 time.
 
 ---
 
